@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: animeworld-india-api
+    env: docker
+    plan: free
+    region: oregon
+    numInstances: 1

@@ -4,6 +4,8 @@ This project is a web application for browsing and watching anime series and mov
 
 ## Deployment
 
+### Option 1: Local Server (XAMPP / WAMP)
+
 To deploy and run this project, you will need a local web server environment (e.g., XAMPP, WAMP, MAMP) that supports PHP.
 
 1.  **Clone the Repository:**
@@ -19,6 +21,23 @@ To deploy and run this project, you will need a local web server environment (e.
 
 4.  **Access in Browser:**
     Open your web browser and navigate to `http://localhost/` (or `http://localhost/your_project_folder_name/` if you placed it in a subfolder).
+
+### Option 2: Deploying to Render (Cloud Hosting)
+
+This project includes a `Dockerfile` and a `render.yaml` configuration, allowing you to deploy it instantly to **Render** as a Docker Web Service.
+
+1. **Push to GitHub/GitLab:** Make sure your repository is hosted on GitHub or GitLab.
+2. **Log into Render:** Go to [Render.com](https://render.com) and log in.
+3. **Deploy via Blueprint:**
+   * Click **New +** and select **Blueprint**.
+   * Connect your GitHub/GitLab repository.
+   * Render will automatically discover the `render.yaml` file and configure everything for you.
+   * Click **Approve** or **Deploy**.
+4. **Access your App & API:**
+   Once the build completes, Render will provide a public URL like `https://animeworld-india-api.onrender.com`.
+   * Web Interface: `https://animeworld-india-api.onrender.com/`
+   * API Base URL: `https://animeworld-india-api.onrender.com/api/anime-world-india/v1/`
+
 
 ## API Documentation
 
