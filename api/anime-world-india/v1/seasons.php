@@ -24,8 +24,6 @@ if (isset($html['error'])) {
     ]);
     exit;
 }
-    exit;
-}
 
 // Load DOM
 libxml_use_internal_errors(true);

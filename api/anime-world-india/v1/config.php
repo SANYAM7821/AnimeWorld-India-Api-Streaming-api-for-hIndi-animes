@@ -1,6 +1,5 @@
-<?php
 // Base domain for the anime site
-define('BASE_URL', 'https://animeworld-india.me'); // You can change this to anime-world.in if needed
+define('BASE_URL', 'https://anime-world.in'); // Changed to active domain to bypass blocks
 
 /**
  * Common function to fetch HTML content from the target site.
