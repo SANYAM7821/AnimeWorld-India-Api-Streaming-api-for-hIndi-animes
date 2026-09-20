@@ -15,19 +15,22 @@ if (!$episodeId && !$movieId) {
 
 if ($episodeId) {
     $type = "episode";
-    $targetUrl = BASE_URL . "/episode/" . $episodeId;
+    $targetPath = "/episode/" . $episodeId;
 } else {
     $type = "movie";
-    $targetUrl = BASE_URL . "/movie/" . $movieId;
+    $targetPath = "/movie/" . $movieId;
 }
 
-// Fetch HTML directly using improved headers
-$html = fetchHtml($targetUrl);
+// Fetch HTML with mirrors fallback execution
+$res = fetchHtmlWithFallback($targetPath);
 
-if (isset($html['error'])) {
-    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $html['error']]);
+if (isset($res['error'])) {
+    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $res['error']]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -37,7 +40,7 @@ libxml_clear_errors();
 $xpath = new DOMXPath($dom);
 
 /* =========================
-   COMMON – STREAM DATA
+   COMMON – STREAM DATA (Intelligent Regex matching Zephyrix & player php keys)
 ========================= */
 
 $iframeNode = $xpath->query("//div[contains(@class,'video-embed')]//iframe")->item(0);
@@ -45,6 +48,15 @@ $downloadNode = $xpath->query("//div[contains(@class,'archive-link-wrap')]//a")-
 
 $streamLink = $iframeNode ? $iframeNode->getAttribute("src") : null;
 $downloadLink = $downloadNode ? $downloadNode->getAttribute("href") : null;
+
+// Fallback regex to capture hidden script variables or post players if iframe is blank
+if (!$streamLink) {
+    if (preg_match('/<iframe[^>]+src=["\'](https?:\/\/play\.zephyrix\.org\/video\/[a-zA-Z0-9]+)["\']/i', $html, $zM)) {
+        $streamLink = $zM[1];
+    } elseif (preg_match('/(?:src|data-src)=["\'](https?:\/\/[^"\']+(?:player1\.php|zephyrix|embed)[^"\']+)["\']/i', $html, $pM)) {
+        $streamLink = $pM[1];
+    }
+}
 
 /* =========================
    MOVIE MODE
@@ -72,7 +84,7 @@ if ($type === "movie") {
     echo json_encode([
         "success" => true,
         "type" => "movie",
-        "source" => str_replace('https://', '', BASE_URL) . "/movie",
+        "source" => str_replace('https://', '', $activeDomain) . "/movie",
         "movie" => $movie,
         "stream" => [
             "streamLink" => $streamLink,
@@ -175,7 +187,7 @@ foreach ($episodeLinks as $a) {
 echo json_encode([
     "success" => true,
     "type" => "episode",
-    "source" => str_replace('https://', '', BASE_URL) . "/episode",
+    "source" => str_replace('https://', '', $activeDomain) . "/episode",
     "series" => [
         "title" => $animeTitleNode ? trim(html_entity_decode($animeTitleNode->textContent)) : null,
         "poster" => $posterNode ? $posterNode->getAttribute("src") : null,

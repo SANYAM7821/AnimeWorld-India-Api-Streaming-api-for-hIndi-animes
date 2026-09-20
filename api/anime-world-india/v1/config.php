@@ -1,6 +1,11 @@
 <?php
-// Base domain for the anime site
-define('BASE_URL', 'https://anime-world.in'); // Changed to active domain to bypass blocks
+// Base domain fallback array for the anime site
+define('SEARCH_DOMAINS', [
+    'https://watchanimeworld.one',
+    'https://watchanimeworld.top',
+    'https://animesalt.top'
+]);
+define('BASE_URL', 'https://watchanimeworld.one');
 
 /**
  * Common function to fetch HTML content from the target site.
@@ -52,3 +57,30 @@ function fetchHtml($url) {
 
     return $html;
 }
+
+/**
+ * Intelligent fetcher that automatically cycles through active fallback mirror domains if one fails.
+ */
+function fetchHtmlWithFallback($path) {
+    $domains = SEARCH_DOMAINS;
+    $lastError = "No domains available";
+
+    // Ensure path starts with a slash if needed
+    $cleanPath = (str_starts_with($path, '/') || str_starts_with($path, 'http')) ? $path : '/' . $path;
+
+    foreach ($domains as $domain) {
+        $targetUrl = str_starts_with($cleanPath, 'http') ? $cleanPath : $domain . $cleanPath;
+        $res = fetchHtml($targetUrl);
+
+        if (!isset($res['error']) && !empty($res) && !str_contains($res, 'This domain is for sale') && !str_contains($res, '/lander')) {
+            return [
+                'html' => $res,
+                'active_domain' => $domain
+            ];
+        }
+        $lastError = isset($res['error']) ? $res['error'] : "Domain returned empty/invalid response";
+    }
+
+    return ["error" => $lastError];
+}
+

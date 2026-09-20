@@ -15,17 +15,20 @@ if ($query === '') {
     exit;
 }
 
-// Build URL and fetch HTML directly
-$targetUrl = BASE_URL . "/search?q=" . urlencode($query) . "&page=" . $page;
-$html = fetchHtml($targetUrl);
+// Build URL path and fetch HTML with resilient mirror tracking
+$searchPath = "/?s=" . urlencode($query) . "&page=" . $page;
+$res = fetchHtmlWithFallback($searchPath);
 
-if (isset($html['error'])) {
+if (isset($res['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to load HTML: " . $html['error']
+        "error" => "Failed to load HTML: " . $res['error']
     ]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -114,6 +117,6 @@ echo json_encode([
     "currentPage" => $page,
     "totalPages" => $totalPages,
     "hasNextPage" => $hasNextPage,
-    "source" => str_replace('https://', '', BASE_URL) . "/search",
+    "source" => str_replace('https://', '', $activeDomain) . "/search",
     "results" => $results
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

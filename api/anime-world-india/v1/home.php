@@ -2,16 +2,19 @@
 header("Content-Type: application/json; charset=UTF-8");
 require_once 'config.php';
 
-// Fetch HTML directly from the target site using configured headers
-$html = fetchHtml(BASE_URL . '/');
+// Fetch HTML with fallback mirrors
+$res = fetchHtmlWithFallback('/');
 
-if (isset($html['error'])) {
+if (isset($res['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to load HTML: " . $html['error']
+        "error" => "Failed to load HTML: " . $res['error']
     ]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 
 // Load HTML into DOM
@@ -63,14 +66,20 @@ function extractItems($xpath, $sectionId, $type = "series") {
     return $items;
 }
 
-// Extract data
+// Extract data using multiple potential layout selectors for robust safety
 $latestSeries = extractItems($xpath, "widget_list_movies_series-2", "series");
+if (empty($latestSeries)) {
+    $latestSeries = extractItems($xpath, "wdgt_movies_series-2", "series");
+}
 $latestMovies = extractItems($xpath, "widget_list_movies_series-3", "movie");
+if (empty($latestMovies)) {
+    $latestMovies = extractItems($xpath, "wdgt_movies_series-3", "movie");
+}
 
 // Final JSON response
 echo json_encode([
     "success" => true,
-    "source" => str_replace('https://', '', BASE_URL),
+    "source" => str_replace('https://', '', $activeDomain),
     "latest_series" => $latestSeries,
     "latest_movies" => $latestMovies
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
