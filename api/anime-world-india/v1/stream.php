@@ -1,5 +1,6 @@
 <?php
 header("Content-Type: application/json; charset=UTF-8");
+require_once 'config.php';
 
 $episodeId = isset($_GET['episodeId']) ? trim($_GET['episodeId']) : null;
 $movieId   = isset($_GET['movieId']) ? trim($_GET['movieId']) : null;
@@ -14,34 +15,17 @@ if (!$episodeId && !$movieId) {
 
 if ($episodeId) {
     $type = "episode";
-    $targetUrl = "https://animeworld-india.me/episode/" . $episodeId;
+    $targetUrl = BASE_URL . "/episode/" . $episodeId;
 } else {
     $type = "movie";
-    $targetUrl = "https://animeworld-india.me/movie/" . $movieId;
+    $targetUrl = BASE_URL . "/movie/" . $movieId;
 }
 
-$proxyUrl = "https://corsproxy.io/?" . urlencode($targetUrl);
+// Fetch HTML directly using improved headers
+$html = fetchHtml($targetUrl);
 
-// Fetch HTML
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $proxyUrl,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_USERAGENT => "Mozilla/5.0",
-    CURLOPT_TIMEOUT => 20,
-]);
-
-$html = curl_exec($ch);
-
-if (curl_errno($ch)) {
-    echo json_encode(["success" => false, "error" => curl_error($ch)]);
-    exit;
-}
-curl_close($ch);
-
-if (!$html) {
-    echo json_encode(["success" => false, "error" => "Failed to load HTML"]);
+if (isset($html['error'])) {
+    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $html['error']]);
     exit;
 }
 
@@ -88,7 +72,7 @@ if ($type === "movie") {
     echo json_encode([
         "success" => true,
         "type" => "movie",
-        "source" => "animeworld-india.me/movie",
+        "source" => str_replace('https://', '', BASE_URL) . "/movie",
         "movie" => $movie,
         "stream" => [
             "streamLink" => $streamLink,
@@ -191,7 +175,7 @@ foreach ($episodeLinks as $a) {
 echo json_encode([
     "success" => true,
     "type" => "episode",
-    "source" => "animeworld-india.me/episode",
+    "source" => str_replace('https://', '', BASE_URL) . "/episode",
     "series" => [
         "title" => $animeTitleNode ? trim(html_entity_decode($animeTitleNode->textContent)) : null,
         "poster" => $posterNode ? $posterNode->getAttribute("src") : null,

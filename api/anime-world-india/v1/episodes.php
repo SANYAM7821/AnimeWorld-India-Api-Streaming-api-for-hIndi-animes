@@ -1,5 +1,6 @@
 <?php
 header("Content-Type: application/json; charset=UTF-8");
+require_once 'config.php';
 
 // Get seasonId
 $seasonId = isset($_GET['seasonId']) ? trim($_GET['seasonId']) : '';
@@ -12,37 +13,17 @@ if ($seasonId === '') {
     exit;
 }
 
-// Build URL
-$targetUrl = "https://animeworld-india.me/season/" . $seasonId;
-$proxyUrl  = "https://corsproxy.io/?" . urlencode($targetUrl);
+// Build URL and Fetch HTML directly
+$targetUrl = BASE_URL . "/season/" . $seasonId;
+$html = fetchHtml($targetUrl);
 
-// Fetch HTML
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $proxyUrl,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_USERAGENT => "Mozilla/5.0",
-    CURLOPT_TIMEOUT => 20,
-]);
-
-$html = curl_exec($ch);
-
-if (curl_errno($ch)) {
+if (isset($html['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => curl_error($ch)
+        "error" => "Failed to load HTML: " . $html['error']
     ]);
     exit;
 }
-
-curl_close($ch);
-
-if (!$html) {
-    echo json_encode([
-        "success" => false,
-        "error" => "Failed to load HTML"
-    ]);
     exit;
 }
 
@@ -132,7 +113,7 @@ foreach ($episodeLinks as $a) {
 
 echo json_encode([
     "success" => true,
-    "source" => "animeworld-india.me/season",
+    "source" => str_replace('https://', '', BASE_URL) . "/season",
     "season" => [
         "seasonId" => $seasonId,
         "animeTitle" => $animeTitle,

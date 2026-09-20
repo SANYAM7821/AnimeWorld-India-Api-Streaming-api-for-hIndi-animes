@@ -1,5 +1,6 @@
 <?php
 header("Content-Type: application/json");
+require_once 'config.php';
 
 $letter = $_GET['letter'] ?? '';
 $page   = $_GET['page'] ?? 1;
@@ -15,24 +16,15 @@ if ($letter === '') {
     exit;
 }
 
-$url = "https://animeworld-india.me/letter/" . urlencode($letter) . "?page=" . $page;
+$url = BASE_URL . "/letter/" . urlencode($letter) . "?page=" . $page;
 
 /* -------- Fetch HTML -------- */
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $url,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_SSL_VERIFYPEER => false,
-    CURLOPT_USERAGENT => "Mozilla/5.0"
-]);
-$html = curl_exec($ch);
-curl_close($ch);
+$html = fetchHtml($url);
 
-if (!$html) {
+if (isset($html['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to fetch page"
+        "error" => "Failed to fetch page: " . $html['error']
     ]);
     exit;
 }
@@ -70,7 +62,7 @@ foreach ($nodes as $article) {
         "rating" => $rating,
         "year" => $year,
         "poster" => $poster,
-        "url" => $link ? "https://animeworld-india.me" . $link : null,
+        "url" => $link ? BASE_URL . $link : null,
         "id" => $id,
         "type" => ($id && str_starts_with($id, "movie/")) ? "movie" : "series"
     ];

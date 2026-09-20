@@ -1,5 +1,6 @@
 <?php
 header("Content-Type: application/json; charset=UTF-8");
+require_once 'config.php';
 
 // Get seriesID
 $seriesID = isset($_GET['seriesID']) ? trim($_GET['seriesID']) : '';
@@ -12,37 +13,17 @@ if ($seriesID === '') {
     exit;
 }
 
-// Build URL
-$targetUrl = "https://animeworld-india.me/series/" . $seriesID;
-$proxyUrl  = "https://corsproxy.io/?" . urlencode($targetUrl);
+// Build URL and Fetch HTML directly
+$targetUrl = BASE_URL . "/series/" . $seriesID;
+$html = fetchHtml($targetUrl);
 
-// Fetch HTML
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $proxyUrl,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_USERAGENT => "Mozilla/5.0",
-    CURLOPT_TIMEOUT => 20,
-]);
-
-$html = curl_exec($ch);
-
-if (curl_errno($ch)) {
+if (isset($html['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => curl_error($ch)
+        "error" => "Failed to load HTML: " . $html['error']
     ]);
     exit;
 }
-
-curl_close($ch);
-
-if (!$html) {
-    echo json_encode([
-        "success" => false,
-        "error" => "Failed to load HTML"
-    ]);
     exit;
 }
 
@@ -112,7 +93,7 @@ foreach ($seasonNodes as $card) {
 
 echo json_encode([
     "success" => true,
-    "source" => "animeworld-india.me/series",
+    "source" => str_replace('https://', '', BASE_URL) . "/series",
     "series" => [
         "seriesId" => $seriesID,
         "title" => $seriesTitle,

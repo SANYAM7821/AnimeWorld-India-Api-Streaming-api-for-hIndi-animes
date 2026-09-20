@@ -1,33 +1,16 @@
 <?php
 header("Content-Type: application/json; charset=UTF-8");
+require_once 'config.php';
 
 // Page param
 $page = isset($_GET['p']) && is_numeric($_GET['p']) ? $_GET['p'] : 1;
 
-// URLs
-$targetUrl = "https://animeworld-india.me/series?page=" . $page;
-$proxyUrl  = "https://corsproxy.io/?" . urlencode($targetUrl);
+// URLs and Fetch HTML directly
+$targetUrl = BASE_URL . "/series?page=" . $page;
+$html = fetchHtml($targetUrl);
 
-// Fetch HTML
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $proxyUrl,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_USERAGENT => "Mozilla/5.0",
-    CURLOPT_TIMEOUT => 20,
-]);
-
-$html = curl_exec($ch);
-
-if (curl_errno($ch)) {
-    echo json_encode(["success" => false, "error" => curl_error($ch)]);
-    exit;
-}
-curl_close($ch);
-
-if (!$html) {
-    echo json_encode(["success" => false, "error" => "Empty response"]);
+if (isset($html['error'])) {
+    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $html['error']]);
     exit;
 }
 
@@ -110,7 +93,7 @@ $hasPrev = $currentPage > 1;
 // =======================
 echo json_encode([
     "success" => true,
-    "source" => "animeworld-india.me/series",
+    "source" => str_replace('https://', '', BASE_URL) . "/series",
     "current_page" => $currentPage,
     "total_pages" => $totalPages,
     "has_next" => $hasNext,

@@ -5,6 +5,8 @@ header("Content-Type: application/json; charset=UTF-8");
 $query = isset($_GET['query']) ? trim($_GET['query']) : '';
 $page  = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
 
+require_once 'config.php';
+
 if ($query === '') {
     echo json_encode([
         "success" => false,
@@ -13,36 +15,14 @@ if ($query === '') {
     exit;
 }
 
-// Build URL
-$targetUrl = "https://animeworld-india.me/search?q=" . urlencode($query) . "&page=" . $page;
-$proxyUrl  = "https://corsproxy.io/?" . urlencode($targetUrl);
+// Build URL and fetch HTML directly
+$targetUrl = BASE_URL . "/search?q=" . urlencode($query) . "&page=" . $page;
+$html = fetchHtml($targetUrl);
 
-// Fetch HTML
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $proxyUrl,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_USERAGENT => "Mozilla/5.0",
-    CURLOPT_TIMEOUT => 20,
-]);
-
-$html = curl_exec($ch);
-
-if (curl_errno($ch)) {
+if (isset($html['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => curl_error($ch)
-    ]);
-    exit;
-}
-
-curl_close($ch);
-
-if (!$html) {
-    echo json_encode([
-        "success" => false,
-        "error" => "Failed to load HTML"
+        "error" => "Failed to load HTML: " . $html['error']
     ]);
     exit;
 }
@@ -134,6 +114,6 @@ echo json_encode([
     "currentPage" => $page,
     "totalPages" => $totalPages,
     "hasNextPage" => $hasNextPage,
-    "source" => "animeworld-india.me/search",
+    "source" => str_replace('https://', '', BASE_URL) . "/search",
     "results" => $results
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

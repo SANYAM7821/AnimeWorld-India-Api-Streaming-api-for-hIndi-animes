@@ -1,39 +1,18 @@
 <?php
 header("Content-Type: application/json; charset=UTF-8");
+require_once 'config.php';
 
-// Target site
-$targetUrl = "https://animeworld-india.me/";
-$proxyUrl  = "https://corsproxy.io/?" . urlencode($targetUrl);
+// Fetch HTML directly from the target site using configured headers
+$html = fetchHtml(BASE_URL . '/');
 
-// Fetch HTML
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $proxyUrl,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => true,
-    CURLOPT_USERAGENT => "Mozilla/5.0",
-    CURLOPT_TIMEOUT => 20,
-]);
-
-$html = curl_exec($ch);
-
-if (curl_errno($ch)) {
+if (isset($html['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => curl_error($ch)
+        "error" => "Failed to load HTML: " . $html['error']
     ]);
     exit;
 }
 
-curl_close($ch);
-
-if (!$html) {
-    echo json_encode([
-        "success" => false,
-        "error" => "Failed to load HTML"
-    ]);
-    exit;
-}
 
 // Load HTML into DOM
 libxml_use_internal_errors(true);
@@ -91,7 +70,7 @@ $latestMovies = extractItems($xpath, "widget_list_movies_series-3", "movie");
 // Final JSON response
 echo json_encode([
     "success" => true,
-    "source" => "animeworld-india.me",
+    "source" => str_replace('https://', '', BASE_URL),
     "latest_series" => $latestSeries,
     "latest_movies" => $latestMovies
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
