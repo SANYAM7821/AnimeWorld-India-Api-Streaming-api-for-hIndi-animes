@@ -1,3 +1,4 @@
+<?php
 // Base domain for the anime site
 define('BASE_URL', 'https://anime-world.in'); // Changed to active domain to bypass blocks
 
