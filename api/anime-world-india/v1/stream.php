@@ -13,24 +13,48 @@ if (!$episodeId && !$movieId) {
     exit;
 }
 
-if ($episodeId) {
-    $type = "episode";
-    $targetPath = "/episode/" . $episodeId;
-} else {
-    $type = "movie";
+$html = null;
+$activeDomain = null;
+$type = $episodeId ? "episode" : "movie";
+
+if ($type === "movie") {
     $targetPath = "/movie/" . $movieId;
+    $res = fetchHtmlWithFallback($targetPath);
+    if (!isset($res['error'])) {
+        $html = $res['html'];
+        $activeDomain = $res['active_domain'];
+    }
+} else {
+    // Episode logic with intelligent variation hunting if direct hit fails
+    $candidates = ["/episode/" . $episodeId];
+
+    // If the episodeId looks like 'slug-s1-e1' or 'slug-1x1', generate variations
+    if (preg_match('/^(.*)-(?:s|season-)?(\d+)(?:x|xe|e|episode-)?(\d+)$/i', $episodeId, $matches)) {
+        $slug = $matches[1];
+        $s = (int)$matches[2];
+        $e = (int)$matches[3];
+        $ePadded = str_pad($e, 2, '0', STR_PAD_LEFT);
+
+        $candidates[] = "/episode/$slug-{$s}x$e/";
+        $candidates[] = "/episode/$slug-{$s}x$ePadded/";
+        $candidates[] = "/episode/$slug-season-$s-episode-$e/";
+        $candidates[] = "/episode/$slug-s$s-e$e/";
+    }
+
+    foreach ($candidates as $path) {
+        $res = fetchHtmlWithFallback($path);
+        if (!isset($res['error'])) {
+            $html = $res['html'];
+            $activeDomain = $res['active_domain'];
+            break;
+        }
+    }
 }
 
-// Fetch HTML with mirrors fallback execution
-$res = fetchHtmlWithFallback($targetPath);
-
-if (isset($res['error'])) {
-    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $res['error']]);
+if (!$html) {
+    echo json_encode(["success" => false, "error" => "Failed to find content. Target might be down or ID is invalid."]);
     exit;
 }
-
-$html = $res['html'];
-$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -40,7 +64,7 @@ libxml_clear_errors();
 $xpath = new DOMXPath($dom);
 
 /* =========================
-   COMMON – STREAM DATA (Intelligent Regex matching Zephyrix & player php keys)
+   COMMON – STREAM DATA (Intelligent Regex matching)
 ========================= */
 
 $iframeNode = $xpath->query("//div[contains(@class,'video-embed')]//iframe")->item(0);

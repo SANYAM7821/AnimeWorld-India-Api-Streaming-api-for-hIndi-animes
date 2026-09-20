@@ -13,19 +13,20 @@ if ($seasonId === '') {
     exit;
 }
 
-// Build URL and Fetch HTML directly
-$targetUrl = BASE_URL . "/season/" . $seasonId;
-$html = fetchHtml($targetUrl);
+// Build URL path and fetch HTML with resilient mirror tracking
+$seasonPath = "/season/" . $seasonId;
+$res = fetchHtmlWithFallback($seasonPath);
 
-if (isset($html['error'])) {
+if (isset($res['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to load HTML: " . $html['error']
+        "error" => "Failed to load HTML: " . $res['error']
     ]);
     exit;
 }
-    exit;
-}
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -39,24 +40,19 @@ $xpath = new DOMXPath($dom);
    SEASON / ANIME DETAILS
 ========================= */
 
-$titleNode   = $xpath->query("//h1[contains(@class,'anime-title')]")->item(0);
-$posterNode  = $xpath->query("//div[contains(@class,'season-poster')]//img")->item(0);
-$metaNodes   = $xpath->query("//div[contains(@class,'meta-row')]//span[contains(@class,'meta-item')]");
-$descNode    = $xpath->query("//p[contains(@class,'season-desc')]")->item(0);
+$animeTitleNode = $xpath->query("//h1[contains(@class,'anime-title')]")->item(0);
+$posterNode     = $xpath->query("//div[contains(@class,'season-poster')]//img")->item(0);
+$descNode       = $xpath->query("//p[contains(@class,'season-desc')]")->item(0);
 
-$animeTitle = $titleNode ? trim(html_entity_decode($titleNode->textContent)) : null;
-$poster     = $posterNode ? $posterNode->getAttribute("src") : null;
-$description= $descNode ? trim(html_entity_decode($descNode->textContent)) : null;
+$metaNodes = $xpath->query("//div[contains(@class,'meta-row')]//span[contains(@class,'meta-item')]");
 
 $seasonName = null;
-$seasonNumber = null;
 $totalEpisodes = null;
 $rating = null;
 $duration = null;
 
 foreach ($metaNodes as $meta) {
     $text = trim($meta->textContent);
-
     if (str_starts_with($text, "Season:")) {
         $seasonName = trim(str_replace("Season:", "", $text));
     } elseif (str_starts_with($text, "Episodes:")) {
@@ -67,6 +63,10 @@ foreach ($metaNodes as $meta) {
         $duration = trim(str_replace("Duration:", "", $text));
     }
 }
+
+$animeTitle  = $animeTitleNode ? trim(html_entity_decode($animeTitleNode->textContent)) : null;
+$poster      = $posterNode ? $posterNode->getAttribute("src") : null;
+$description = $descNode ? trim(html_entity_decode($descNode->textContent)) : null;
 
 /* =========================
    EPISODES LIST
@@ -113,7 +113,7 @@ foreach ($episodeLinks as $a) {
 
 echo json_encode([
     "success" => true,
-    "source" => str_replace('https://', '', BASE_URL) . "/season",
+    "source" => str_replace('https://', '', $activeDomain) . "/season",
     "season" => [
         "seasonId" => $seasonId,
         "animeTitle" => $animeTitle,

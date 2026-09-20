@@ -13,17 +13,20 @@ if ($seriesID === '') {
     exit;
 }
 
-// Build URL and Fetch HTML directly
-$targetUrl = BASE_URL . "/series/" . $seriesID;
-$html = fetchHtml($targetUrl);
+// Build URL path and fetch HTML with resilient mirror tracking
+$seriesPath = "/series/" . $seriesID;
+$res = fetchHtmlWithFallback($seriesPath);
 
-if (isset($html['error'])) {
+if (isset($res['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to load HTML: " . $html['error']
+        "error" => "Failed to load HTML: " . $res['error']
     ]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -91,7 +94,7 @@ foreach ($seasonNodes as $card) {
 
 echo json_encode([
     "success" => true,
-    "source" => str_replace('https://', '', BASE_URL) . "/series",
+    "source" => str_replace('https://', '', $activeDomain) . "/series",
     "series" => [
         "seriesId" => $seriesID,
         "title" => $seriesTitle,

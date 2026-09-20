@@ -16,18 +16,20 @@ if ($letter === '') {
     exit;
 }
 
-$url = BASE_URL . "/letter/" . urlencode($letter) . "?page=" . $page;
+// Build URL path and Fetch HTML with resilient mirror tracking
+$a2zPath = "/letter/" . urlencode($letter) . "?page=" . $page;
+$res = fetchHtmlWithFallback($a2zPath);
 
-/* -------- Fetch HTML -------- */
-$html = fetchHtml($url);
-
-if (isset($html['error'])) {
+if (isset($res['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to fetch page: " . $html['error']
+        "error" => "Failed to fetch page: " . $res['error']
     ]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 /* -------- Parse HTML -------- */
 libxml_use_internal_errors(true);
@@ -62,7 +64,7 @@ foreach ($nodes as $article) {
         "rating" => $rating,
         "year" => $year,
         "poster" => $poster,
-        "url" => $link ? BASE_URL . $link : null,
+        "url" => $link ? $activeDomain . $link : null,
         "id" => $id,
         "type" => ($id && str_starts_with($id, "movie/")) ? "movie" : "series"
     ];

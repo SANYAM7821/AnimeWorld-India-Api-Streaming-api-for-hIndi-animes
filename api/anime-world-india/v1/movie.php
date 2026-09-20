@@ -5,17 +5,20 @@ require_once 'config.php';
 // Get page param, default = 1
 $page = isset($_GET['p']) && is_numeric($_GET['p']) ? $_GET['p'] : 1;
 
-// Build URL and Fetch HTML directly
-$targetUrl = BASE_URL . "/movies?page=" . $page;
-$html = fetchHtml($targetUrl);
+// Build URL path and Fetch HTML with resilient mirror tracking
+$moviesPath = "/movies?page=" . $page;
+$res = fetchHtmlWithFallback($moviesPath);
 
-if (isset($html['error'])) {
+if (isset($res['error'])) {
     echo json_encode([
         "success" => false,
-        "error" => "Failed to load HTML: " . $html['error']
+        "error" => "Failed to load HTML: " . $res['error']
     ]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -96,7 +99,7 @@ $hasPrev = $currentPage > 1;
 // =======================
 echo json_encode([
     "success" => true,
-    "source" => str_replace('https://', '', BASE_URL) . "/movies",
+    "source" => str_replace('https://', '', $activeDomain) . "/movies",
     "current_page" => $currentPage,
     "total_pages" => $totalPages,
     "has_next" => $hasNext,

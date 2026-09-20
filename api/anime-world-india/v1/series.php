@@ -5,14 +5,17 @@ require_once 'config.php';
 // Page param
 $page = isset($_GET['p']) && is_numeric($_GET['p']) ? $_GET['p'] : 1;
 
-// URLs and Fetch HTML directly
-$targetUrl = BASE_URL . "/series?page=" . $page;
-$html = fetchHtml($targetUrl);
+// URLs and Fetch HTML with resilient mirror tracking
+$seriesPath = "/series?page=" . $page;
+$res = fetchHtmlWithFallback($seriesPath);
 
-if (isset($html['error'])) {
-    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $html['error']]);
+if (isset($res['error'])) {
+    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $res['error']]);
     exit;
 }
+
+$html = $res['html'];
+$activeDomain = $res['active_domain'];
 
 // Load DOM
 libxml_use_internal_errors(true);
@@ -93,7 +96,7 @@ $hasPrev = $currentPage > 1;
 // =======================
 echo json_encode([
     "success" => true,
-    "source" => str_replace('https://', '', BASE_URL) . "/series",
+    "source" => str_replace('https://', '', $activeDomain) . "/series",
     "current_page" => $currentPage,
     "total_pages" => $totalPages,
     "has_next" => $hasNext,
