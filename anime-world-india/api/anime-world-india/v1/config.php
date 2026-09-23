@@ -120,9 +120,6 @@ function upstashRedisCommand($url, $token, $commandArray) {
     return null;
 }
 
-/**
- * Sequential Read & Automatic Failover across configured Redis accounts
- */
 function getRedisCache($key) {
     $accounts = [
         ['url' => UPSTASH_REDIS_REST_URL, 'token' => UPSTASH_REDIS_REST_TOKEN],
@@ -144,10 +141,6 @@ function getRedisCache($key) {
     return null;
 }
 
-/**
- * Parallel Multi-Redis Storage
- * Replicates cached JSON payload in parallel across ALL configured Upstash Redis accounts
- */
 function setRedisCache($key, $value, $ttlSeconds) {
     $accounts = [
         ['url' => UPSTASH_REDIS_REST_URL, 'token' => UPSTASH_REDIS_REST_TOKEN],
@@ -208,4 +201,97 @@ function setRedisCache($key, $value, $ttlSeconds) {
     curl_multi_close($mh);
 
     return true;
+}
+
+/* =========================================================================
+   ANILIST ID RESOLVER HELPER
+   Maps AniList ID -> PirateXPlay Series Slug & Caches in Redis
+   ========================================================================= */
+
+function fetchAniListDetails($anilistId) {
+    $query = 'query ($id: Int) { Media (id: $id, type: ANIME) { title { romaji english native } synonyms } }';
+    $body  = json_encode(['query' => $query, 'variables' => ['id' => (int)$anilistId]]);
+
+    $ch = curl_init('https://graphql.anilist.co');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_TIMEOUT => 5,
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
+
+    $res = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200 && $res) {
+        $json = json_decode($res, true);
+        if (isset($json['data']['Media'])) {
+            return $json['data']['Media'];
+        }
+    }
+    return null;
+}
+
+function resolveAniListToSlug($anilistId) {
+    $mappingKey = "mapping_anilist_" . $anilistId;
+
+    // Check Redis mapping cache
+    $cachedSlug = getRedisCache($mappingKey);
+    if ($cachedSlug && !empty($cachedSlug)) {
+        return $cachedSlug;
+    }
+
+    // Fetch titles from AniList
+    $aniDetails = fetchAniListDetails($anilistId);
+    if (!$aniDetails) {
+        return null;
+    }
+
+    $titlesToTry = [];
+    if (!empty($aniDetails['title']['english'])) {
+        $titlesToTry[] = $aniDetails['title']['english'];
+    }
+    if (!empty($aniDetails['title']['romaji'])) {
+        $titlesToTry[] = $aniDetails['title']['romaji'];
+    }
+    if (!empty($aniDetails['synonyms'])) {
+        foreach ($aniDetails['synonyms'] as $syn) {
+            if (is_string($syn) && strlen($syn) > 2) {
+                $titlesToTry[] = $syn;
+            }
+        }
+    }
+
+    foreach ($titlesToTry as $title) {
+        $searchRes = fetchHtmlWithFallback("/?s=" . urlencode($title));
+        if (isset($searchRes['html'])) {
+            libxml_use_internal_errors(true);
+            $dom = new DOMDocument();
+            $dom->loadHTML($searchRes['html']);
+            libxml_clear_errors();
+            $xpath = new DOMXPath($dom);
+
+            $articles = $xpath->query("//article[contains(@class,'post')]");
+            foreach ($articles as $art) {
+                $linkNode = $xpath->query(".//a[contains(@class,'lnk-blk')]", $art)->item(0);
+                if ($linkNode) {
+                    $link = $linkNode->getAttribute("href");
+                    if ($link && str_contains($link, "series")) {
+                        $cleanPath = parse_url($link, PHP_URL_PATH);
+                        $foundSlug = trim(str_replace("/series/", "", $cleanPath), "/");
+                        if ($foundSlug) {
+                            // Save mapping in Redis permanently (30 Days TTL)
+                            setRedisCache($mappingKey, $foundSlug, 2592000);
+                            return $foundSlug;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return null;
 }

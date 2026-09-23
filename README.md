@@ -1,11 +1,13 @@
 # Anime World India Streaming API (PirateXPlay Backend)
 
-High-performance PHP API for fetching anime streaming links, series details, movies, and episode metadata powered by **PirateXPlay** with **Upstash Redis Caching** (Parallel Multi-Account Storage & Sequential Read Failover).
+High-performance PHP API for fetching anime streaming links and backup server embeds powered by **PirateXPlay** with **Upstash Redis Caching** (Parallel Multi-Account Storage & Sequential Read Failover) and **AniList ID Direct Lookup**.
 
 ---
 
 ## Features
 
+- **Lean & Fast JSON Response**: Stream links and server embeds are prioritized at the top of the JSON payload. Heavy episode lists and poster arrays have been removed for ultra-fast response times.
+- **AniList ID Direct Search**: Pass `anilistId` directly (e.g. `anilistId=20&ep=1`) and the API automatically resolves the anime title via AniList GraphQL, maps it to PirateXPlay, and caches the mapping permanently in Redis.
 - **Multi-Language Audio & Subs**: Supports Japanese Audio (Subbed), English Dubbed, Hindi Dubbed, Tamil, Telugu, and Multi-Audio streams.
 - **Upstash Redis Caching**:
   - **Sequential Read Failover**: Reads from Primary Redis -> Secondary Redis -> Tertiary Redis with zero downtime.
@@ -43,41 +45,43 @@ All API endpoints are located under `/api/anime-world-india/v1/`.
 
 * **Endpoint**: `/api/anime-world-india/v1/stream.php`
 * **Method**: `GET`
-* **Description**: Fetches streaming iframe links, download URLs, and backup server embeds for an episode or movie.
+* **Description**: Fetches streaming iframe links and backup server embeds.
 
 #### Query Parameters:
 | Parameter | Type | Required? | Description |
 | :--- | :--- | :--- | :--- |
-| `id` or `episodeId` | string | Optional* | The slug/ID of the episode (e.g. `naruto-season-1-46260-1x1`) |
-| `movieId` | string | Optional* | The slug/ID of the movie (e.g. `naruto-x-ut-2011-698940`) |
+| `anilistId` | int | Optional* | Numeric AniList ID (e.g. `20` for Naruto). Automatically resolves title and maps to stream! |
+| `ep` | int/string | Optional | Episode number when using `anilistId` (e.g. `1`, `12`, default: `1`) |
+| `id` or `episodeId` | string | Optional* | Direct episode slug (e.g. `naruto-season-1-46260-1x1`) |
+| `movieId` | string | Optional* | Direct movie slug (e.g. `naruto-x-ut-2011-698940`) |
 | `ongoing` | boolean | Optional | Pass `true` or `1` for airing/ongoing shows to set **12 Hours TTL** (default is **30 Days TTL**) |
 | `refresh` or `force` | boolean | Optional | Pass `true` or `1` to bypass Redis cache, force a live re-scrape, and update Redis |
 
-*\*Note: Either `episodeId` (or `id`) OR `movieId` is required.*
+*\*Note: Either `anilistId`, `episodeId` (or `id`), OR `movieId` is required.*
 
-#### Example Request:
-```http
-GET /api/anime-world-india/v1/stream.php?id=naruto-season-1-46260-1x1&ongoing=true
-```
+#### Example Requests:
 
-#### Example Success Response:
+1. **Using AniList ID (Simplest for Mobile Apps)**:
+   ```http
+   GET /api/anime-world-india/v1/stream.php?anilistId=20&ep=1
+   ```
+
+2. **Using Direct Episode Slug**:
+   ```http
+   GET /api/anime-world-india/v1/stream.php?id=naruto-season-1-46260-1x1&ongoing=true
+   ```
+
+3. **Force Refresh**:
+   ```http
+   GET /api/anime-world-india/v1/stream.php?anilistId=20&ep=1&refresh=true
+   ```
+
+#### Ultra-Clean & Compact Success Response JSON:
 ```json
 {
     "success": true,
-    "type": "episode",
-    "cached": false,
-    "ttl": 43200,
-    "source": "piratexplay.cc/episode",
-    "series": {
-        "title": "Naruto",
-        "poster": "https://image.tmdb.org/t/p/w500/xppeysfvDKVx775MFuH8Z9BlpMk.jpg",
-        "season": "Season 1",
-        "totalEpisodes": "220"
-    },
-    "current": {
-        "episodeId": "naruto-season-1-46260-1x1",
-        "title": "Naruto Episode 1"
-    },
+    "cached": true,
+    "ttl": 2592000,
     "stream": {
         "streamLink": "https://rubystm.com/e/1ar22v23frcs.html",
         "file": "https://rubystm.com/e/1ar22v23frcs.html",
@@ -89,63 +93,31 @@ GET /api/anime-world-india/v1/stream.php?id=naruto-season-1-46260-1x1&ongoing=tr
             {
                 "name": "Server 2",
                 "url": "https://vidstreaming.xyz/v/V2RG6YD4QbI9/"
+            },
+            {
+                "name": "Server 3",
+                "url": "https://gdmirrorbot.nl/embed/e44mpcm"
             }
         ]
+    },
+    "info": {
+        "title": "Naruto Episode 1",
+        "id": "naruto-season-1-46260-1x1",
+        "anilistId": 20,
+        "type": "episode",
+        "source": "piratexplay.cc"
     }
 }
 ```
 
 ---
 
-### 2. Search Endpoint (Live Response - Uncached)
+### 2. Search Endpoint (Uncached)
 
 * **Endpoint**: `/api/anime-world-india/v1/search.php`
 * **Method**: `GET`
-* **Parameters**:
-  * `query` (string, required): Search keyword (e.g., `naruto`, `jujutsu kaisen`).
-  * `p` (int, optional): Page number (default: `1`).
+* **Parameters**: `query` (required), `p` (optional page number)
 
-#### Example Request:
 ```http
 GET /api/anime-world-india/v1/search.php?query=naruto&p=1
 ```
-
----
-
-### 3. Homepage Latest Releases (Live Response - Uncached)
-
-* **Endpoint**: `/api/anime-world-india/v1/home.php`
-* **Method**: `GET`
-* **Description**: Fetches latest anime series and movies.
-
----
-
-### 4. Seasons / Anime Info (Live Response - Uncached)
-
-* **Endpoint**: `/api/anime-world-india/v1/seasons.php`
-* **Method**: `GET`
-* **Parameters**: `seriesID` (string, required)
-
----
-
-### 5. Episodes List (Live Response - Uncached)
-
-* **Endpoint**: `/api/anime-world-india/v1/episodes.php`
-* **Method**: `GET`
-* **Parameters**: `seasonId` (string, required)
-
----
-
-### 6. Series Catalog (Live Response - Uncached)
-
-* **Endpoint**: `/api/anime-world-india/v1/series.php`
-* **Method**: `GET`
-* **Parameters**: `p` (int, optional page number)
-
----
-
-### 7. Movies Catalog (Live Response - Uncached)
-
-* **Endpoint**: `/api/anime-world-india/v1/movie.php`
-* **Method**: `GET`
-* **Parameters**: `p` (int, optional page number)
