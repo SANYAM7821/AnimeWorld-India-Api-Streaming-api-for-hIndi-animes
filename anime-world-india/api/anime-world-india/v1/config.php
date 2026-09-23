@@ -4,6 +4,13 @@ define('SEARCH_DOMAINS', [
 ]);
 define('BASE_URL', 'https://piratexplay.cc');
 
+// Upstash Redis REST Credentials (Primary & Secondary Failover)
+define('UPSTASH_REDIS_REST_URL', getenv('UPSTASH_REDIS_REST_URL') ?: '');
+define('UPSTASH_REDIS_REST_TOKEN', getenv('UPSTASH_REDIS_REST_TOKEN') ?: '');
+
+define('UPSTASH_REDIS_REST_URL_2', getenv('UPSTASH_REDIS_REST_URL_2') ?: '');
+define('UPSTASH_REDIS_REST_TOKEN_2', getenv('UPSTASH_REDIS_REST_TOKEN_2') ?: '');
+
 function fetchHtml($url) {
     $ch = curl_init();
 
@@ -70,4 +77,83 @@ function fetchHtmlWithFallback($path) {
     }
 
     return ["error" => $lastError];
+}
+
+/* =========================================================================
+   UPSTASH REDIS CACHING HELPER (REST API)
+   Handles Primary & Secondary Redis Accounts with Automatic Fallback
+   ========================================================================= */
+
+function upstashRedisCommand($url, $token, $commandArray) {
+    if (empty($url) || empty($token)) {
+        return null;
+    }
+
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => rtrim($url, '/'),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $token,
+            'Content-Type: application/json'
+        ],
+        CURLOPT_POSTFIELDS => json_encode($commandArray),
+        CURLOPT_TIMEOUT => 3, // 3s fast timeout
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
+
+    $res = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200 && $res) {
+        $data = json_decode($res, true);
+        if (isset($data['result']) && !isset($data['error'])) {
+            return $data['result'];
+        }
+    }
+    return null;
+}
+
+function getRedisCache($key) {
+    // 1. Try Primary Redis
+    try {
+        $val = upstashRedisCommand(UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, ["GET", $key]);
+        if ($val !== null && $val !== false) {
+            return $val;
+        }
+    } catch (\Throwable $e) {}
+
+    // 2. Try Secondary / Backup Redis
+    try {
+        $val = upstashRedisCommand(UPSTASH_REDIS_REST_URL_2, UPSTASH_REDIS_REST_TOKEN_2, ["GET", $key]);
+        if ($val !== null && $val !== false) {
+            return $val;
+        }
+    } catch (\Throwable $e) {}
+
+    return null;
+}
+
+function setRedisCache($key, $value, $ttlSeconds) {
+    $success = false;
+
+    // 1. Try Primary Redis
+    try {
+        $res = upstashRedisCommand(UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, ["SET", $key, $value, "EX", (int)$ttlSeconds]);
+        if ($res === "OK") {
+            $success = true;
+        }
+    } catch (\Throwable $e) {}
+
+    // 2. Try Secondary / Backup Redis
+    try {
+        $res2 = upstashRedisCommand(UPSTASH_REDIS_REST_URL_2, UPSTASH_REDIS_REST_TOKEN_2, ["SET", $key, $value, "EX", (int)$ttlSeconds]);
+        if ($res2 === "OK") {
+            $success = true;
+        }
+    } catch (\Throwable $e) {}
+
+    return $success;
 }
