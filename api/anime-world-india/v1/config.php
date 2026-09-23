@@ -4,12 +4,15 @@ define('SEARCH_DOMAINS', [
 ]);
 define('BASE_URL', 'https://piratexplay.cc');
 
-// Upstash Redis REST Credentials (Primary & Secondary Failover)
+// Upstash Redis REST Credentials (Primary, Secondary, Tertiary Accounts)
 define('UPSTASH_REDIS_REST_URL', getenv('UPSTASH_REDIS_REST_URL') ?: '');
 define('UPSTASH_REDIS_REST_TOKEN', getenv('UPSTASH_REDIS_REST_TOKEN') ?: '');
 
 define('UPSTASH_REDIS_REST_URL_2', getenv('UPSTASH_REDIS_REST_URL_2') ?: '');
 define('UPSTASH_REDIS_REST_TOKEN_2', getenv('UPSTASH_REDIS_REST_TOKEN_2') ?: '');
+
+define('UPSTASH_REDIS_REST_URL_3', getenv('UPSTASH_REDIS_REST_URL_3') ?: '');
+define('UPSTASH_REDIS_REST_TOKEN_3', getenv('UPSTASH_REDIS_REST_TOKEN_3') ?: '');
 
 function fetchHtml($url) {
     $ch = curl_init();
@@ -80,8 +83,9 @@ function fetchHtmlWithFallback($path) {
 }
 
 /* =========================================================================
-   UPSTASH REDIS CACHING HELPER (REST API)
-   Handles Primary & Secondary Redis Accounts with Automatic Fallback
+   PARALLEL MULTI-REDIS CACHING HELPER
+   1. Sequential Read with Automatic Failover (Account 1 -> Account 2 -> Account 3)
+   2. Parallel Multi-Account Storage (Replicates across ALL Redis accounts)
    ========================================================================= */
 
 function upstashRedisCommand($url, $token, $commandArray) {
@@ -99,7 +103,7 @@ function upstashRedisCommand($url, $token, $commandArray) {
             'Content-Type: application/json'
         ],
         CURLOPT_POSTFIELDS => json_encode($commandArray),
-        CURLOPT_TIMEOUT => 3, // 3s fast timeout
+        CURLOPT_TIMEOUT => 3, // Fast 3s timeout
         CURLOPT_SSL_VERIFYPEER => false
     ]);
 
@@ -116,44 +120,92 @@ function upstashRedisCommand($url, $token, $commandArray) {
     return null;
 }
 
+/**
+ * Sequential Read & Automatic Failover across configured Redis accounts
+ */
 function getRedisCache($key) {
-    // 1. Try Primary Redis
-    try {
-        $val = upstashRedisCommand(UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, ["GET", $key]);
-        if ($val !== null && $val !== false) {
-            return $val;
-        }
-    } catch (\Throwable $e) {}
+    $accounts = [
+        ['url' => UPSTASH_REDIS_REST_URL, 'token' => UPSTASH_REDIS_REST_TOKEN],
+        ['url' => UPSTASH_REDIS_REST_URL_2, 'token' => UPSTASH_REDIS_REST_TOKEN_2],
+        ['url' => UPSTASH_REDIS_REST_URL_3, 'token' => UPSTASH_REDIS_REST_TOKEN_3],
+    ];
 
-    // 2. Try Secondary / Backup Redis
-    try {
-        $val = upstashRedisCommand(UPSTASH_REDIS_REST_URL_2, UPSTASH_REDIS_REST_TOKEN_2, ["GET", $key]);
-        if ($val !== null && $val !== false) {
-            return $val;
+    foreach ($accounts as $acc) {
+        if (!empty($acc['url']) && !empty($acc['token'])) {
+            try {
+                $val = upstashRedisCommand($acc['url'], $acc['token'], ["GET", $key]);
+                if ($val !== null && $val !== false && !empty($val)) {
+                    return $val;
+                }
+            } catch (\Throwable $e) {}
         }
-    } catch (\Throwable $e) {}
+    }
 
     return null;
 }
 
+/**
+ * Parallel Multi-Redis Storage
+ * Replicates cached JSON payload in parallel across ALL configured Upstash Redis accounts
+ */
 function setRedisCache($key, $value, $ttlSeconds) {
-    $success = false;
+    $accounts = [
+        ['url' => UPSTASH_REDIS_REST_URL, 'token' => UPSTASH_REDIS_REST_TOKEN],
+        ['url' => UPSTASH_REDIS_REST_URL_2, 'token' => UPSTASH_REDIS_REST_TOKEN_2],
+        ['url' => UPSTASH_REDIS_REST_URL_3, 'token' => UPSTASH_REDIS_REST_TOKEN_3],
+    ];
 
-    // 1. Try Primary Redis
-    try {
-        $res = upstashRedisCommand(UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, ["SET", $key, $value, "EX", (int)$ttlSeconds]);
-        if ($res === "OK") {
-            $success = true;
+    $validAccounts = [];
+    foreach ($accounts as $acc) {
+        if (!empty($acc['url']) && !empty($acc['token'])) {
+            $validAccounts[] = $acc;
         }
-    } catch (\Throwable $e) {}
+    }
 
-    // 2. Try Secondary / Backup Redis
-    try {
-        $res2 = upstashRedisCommand(UPSTASH_REDIS_REST_URL_2, UPSTASH_REDIS_REST_TOKEN_2, ["SET", $key, $value, "EX", (int)$ttlSeconds]);
-        if ($res2 === "OK") {
-            $success = true;
+    if (empty($validAccounts)) {
+        return false;
+    }
+
+    $mh = curl_multi_init();
+    $curlHandles = [];
+    $payload = json_encode(["SET", $key, $value, "EX", (int)$ttlSeconds]);
+
+    foreach ($validAccounts as $index => $acc) {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => rtrim($acc['url'], '/'),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $acc['token'],
+                'Content-Type: application/json'
+            ],
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_SSL_VERIFYPEER => false
+        ]);
+        curl_multi_add_handle($mh, $ch);
+        $curlHandles[$index] = $ch;
+    }
+
+    $active = null;
+    do {
+        $mrc = curl_multi_exec($mh, $active);
+    } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+
+    while ($active && $mrc == CURLM_OK) {
+        if (curl_multi_select($mh) != -1) {
+            do {
+                $mrc = curl_multi_exec($mh, $active);
+            } while ($mrc == CURLM_CALL_MULTI_PERFORM);
         }
-    } catch (\Throwable $e) {}
+    }
 
-    return $success;
+    foreach ($curlHandles as $ch) {
+        curl_multi_remove_handle($mh, $ch);
+        curl_close($ch);
+    }
+    curl_multi_close($mh);
+
+    return true;
 }
