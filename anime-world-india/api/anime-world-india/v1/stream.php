@@ -17,13 +17,89 @@ $isOngoing = ($isOngoingParam === 'true' || $isOngoingParam === '1' || $isOngoin
 $refreshParam = isset($_GET['refresh']) ? strtolower(trim($_GET['refresh'])) : (isset($_GET['force']) ? strtolower(trim($_GET['force'])) : '');
 $forceRefresh = ($refreshParam === 'true' || $refreshParam === '1' || $refreshParam === 'yes');
 
+// Cache TTL and Description Labels
+$ttlSeconds  = $isOngoing ? 43200 : 2592000; // 12 Hours (43200s) for Ongoing, 30 Days (2592000s) for Completed
+$ttlLabel    = $isOngoing ? "12 Hours (43200s - Ongoing Series)" : "30 Days (2592000s - Completed Series)";
+$cacheMode   = $isOngoing ? "12 Hours Cache (Ongoing Anime)" : "30 Days Cache (Completed Anime)";
+
+// Helper function to find episode URL on PirateXPlay
+function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
+    $cleanEp = preg_replace('/[^0-9]/', '', $epNumber) ?: '1';
+
+    $seriesPath = str_starts_with($seriesSlug, "/") ? $seriesSlug : "/series/" . $seriesSlug;
+    $res = fetchHtmlWithFallback($seriesPath);
+    if (!isset($res['html'])) {
+        return null;
+    }
+
+    $html = $res['html'];
+    $activeDomain = $res['active_domain'];
+
+    libxml_use_internal_errors(true);
+    $dom = new DOMDocument();
+    $dom->loadHTML($html);
+    libxml_clear_errors();
+    $xpath = new DOMXPath($dom);
+
+    // Search for episode link directly on current series page
+    $epLinks = $xpath->query("//a[contains(@href,'/episode/')]");
+    foreach ($epLinks as $a) {
+        $href = $a->getAttribute("href");
+        if (str_contains($href, "-1x" . $cleanEp) || str_ends_with(rtrim($href, "/"), "-" . $cleanEp)) {
+            return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
+        }
+    }
+
+    // Check if Season 1 button exists if episode 1 was requested
+    $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')] | //a[contains(@href,'/series/')]");
+    $targetSeasonUrl = null;
+
+    foreach ($seasonBtns as $sBtn) {
+        $seasonAttr = $sBtn->getAttribute("data-season");
+        $href = $sBtn->getAttribute("href");
+
+        if ($seasonAttr === "1" || str_contains($href, "season-1")) {
+            $targetSeasonUrl = parse_url($href, PHP_URL_PATH);
+            break;
+        }
+    }
+
+    if ($targetSeasonUrl) {
+        $sRes = fetchHtmlWithFallback($targetSeasonUrl);
+        if (isset($sRes['html'])) {
+            $sDom = new DOMDocument();
+            libxml_use_internal_errors(true);
+            $sDom->loadHTML($sRes['html']);
+            libxml_clear_errors();
+            $sXpath = new DOMXPath($sDom);
+
+            $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
+            foreach ($sEpLinks as $a) {
+                $href = $a->getAttribute("href");
+                if (str_contains($href, "-1x" . $cleanEp) || str_ends_with(rtrim($href, "/"), "-" . $cleanEp) || str_contains($href, "episode-" . $cleanEp)) {
+                    return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 // 1. Resolve AniList ID if provided
 if ($anilistId && !$episodeId && !$movieId) {
     $resolvedSlug = resolveAniListToSlug($anilistId);
     if ($resolvedSlug) {
-        // Build episode slug from resolved series slug & episode number
-        $cleanEp = preg_replace('/[^0-9]/', '', $epNum) ?: '1';
-        $episodeId = $resolvedSlug . "-1x" . $cleanEp;
+        $resolvedEp = resolveEpisodePageUrl($resolvedSlug, $epNum);
+        if ($resolvedEp) {
+            $episodeId = trim($resolvedEp['url'], "/");
+            if (str_starts_with($episodeId, "episode/")) {
+                $episodeId = str_replace("episode/", "", $episodeId);
+            }
+        } else {
+            $cleanEp = preg_replace('/[^0-9]/', '', $epNum) ?: '1';
+            $episodeId = $resolvedSlug . "-1x" . $cleanEp;
+        }
     } else {
         echo json_encode(["success" => false, "error" => "Could not resolve AniList ID: " . $anilistId]);
         exit;
@@ -35,9 +111,8 @@ if (!$episodeId && !$movieId) {
     exit;
 }
 
-// 2. Calculate Cache Key & Smart Dynamic TTL
+// 2. Calculate Cache Key
 $cacheKey = $episodeId ? "stream_ep_" . $episodeId : "stream_movie_" . $movieId;
-$ttlSeconds = $isOngoing ? 43200 : 2592000; // 12 Hours (43200s) for Ongoing, 30 Days (2592000s) for Completed
 
 // 3. Check Upstash Redis Cache (if not force-refreshing)
 if (!$forceRefresh) {
@@ -66,11 +141,14 @@ if ($type === "movie") {
 } else {
     $targetPaths = ["/episode/" . $episodeId, "/watch/" . $episodeId];
 
-    // Attempt variations if first lookup returns nothing
+    // Check if direct episode path failed, try resolving via series page
     if (preg_match('/^(.*?)-1x(\d+)$/', $episodeId, $matches)) {
         $seriesBase = $matches[1];
         $epNumber   = $matches[2];
-        $targetPaths[] = "/series/" . $seriesBase . "/";
+        $resolvedEp = resolveEpisodePageUrl($seriesBase, $epNumber);
+        if ($resolvedEp) {
+            $targetPaths[] = $resolvedEp['url'];
+        }
     }
 
     foreach ($targetPaths as $path) {
@@ -78,35 +156,6 @@ if ($type === "movie") {
         if (!isset($res['error'])) {
             $html = $res['html'];
             $activeDomain = $res['active_domain'];
-
-            // If we fetched a series page, find the exact episode link
-            if (str_contains($path, "/series/")) {
-                libxml_use_internal_errors(true);
-                $domSeries = new DOMDocument();
-                $domSeries->loadHTML($html);
-                libxml_clear_errors();
-                $xpathSeries = new DOMXPath($domSeries);
-
-                $epLinks = $xpathSeries->query("//a[contains(@href,'/episode/')]");
-                $foundEpUrl = null;
-                $targetPattern = "-1x" . ($cleanEp ?? '1');
-
-                foreach ($epLinks as $aEl) {
-                    $href = $aEl->getAttribute("href");
-                    if (str_contains($href, $targetPattern) || str_ends_with(rtrim($href, "/"), "-" . ($cleanEp ?? '1'))) {
-                        $foundEpUrl = parse_url($href, PHP_URL_PATH);
-                        break;
-                    }
-                }
-
-                if ($foundEpUrl) {
-                    $resEp = fetchHtmlWithFallback($foundEpUrl);
-                    if (!isset($resEp['error'])) {
-                        $html = $resEp['html'];
-                        $activeDomain = $resEp['active_domain'];
-                    }
-                }
-            }
             break;
         }
     }
@@ -175,11 +224,11 @@ $downloadLink = $downloadNode ? $downloadNode->getAttribute("href") : $streamLin
 $titleNode = $xpath->query("//h1[contains(@class,'entry-title')] | //h1")->item(0);
 $titleText = $titleNode ? trim(html_entity_decode($titleNode->textContent)) : "Stream";
 
-/* Construct Lean & Fast JSON Response (Stream object at top, no heavy episode lists) */
+/* Construct Lean & Fast JSON Response (Stream object at top, explicit TTL & Cache Mode in info) */
 $responseArray = [
     "success" => true,
     "cached"  => false,
-    "ttl"     => $ttlSeconds,
+    "ttl"     => $ttlLabel,
     "stream"  => [
         "streamLink" => $streamLink,
         "file"       => $downloadLink,
@@ -187,6 +236,7 @@ $responseArray = [
     ],
     "info" => [
         "title"     => $titleText,
+        "cacheMode" => $cacheMode,
         "id"        => $episodeId ? $episodeId : $movieId,
         "anilistId" => $anilistId ? (int)$anilistId : null,
         "type"      => $type,
