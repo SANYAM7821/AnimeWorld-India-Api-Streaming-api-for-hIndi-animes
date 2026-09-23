@@ -5,3 +5,16 @@ services:
     plan: free
     region: oregon
     numInstances: 1
+    envVars:
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL_2
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN_2
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL_3
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN_3
+        sync: false
