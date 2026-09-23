@@ -2,81 +2,61 @@
 header("Content-Type: application/json; charset=UTF-8");
 require_once 'config.php';
 
-// Fetch HTML with fallback mirrors
-$res = fetchHtmlWithFallback('/');
+function parseArticles($html, $type = "series") {
+    libxml_use_internal_errors(true);
+    $dom = new DOMDocument();
+    $dom->loadHTML($html);
+    libxml_clear_errors();
+    $xpath = new DOMXPath($dom);
 
-if (isset($res['error'])) {
-    echo json_encode([
-        "success" => false,
-        "error" => "Failed to load HTML: " . $res['error']
-    ]);
-    exit;
-}
-
-$html = $res['html'];
-$activeDomain = $res['active_domain'];
-
-
-// Load HTML into DOM
-libxml_use_internal_errors(true);
-$dom = new DOMDocument();
-$dom->loadHTML($html);
-libxml_clear_errors();
-
-$xpath = new DOMXPath($dom);
-
-// Helper function to extract list data
-function extractItems($xpath, $sectionId, $type = "series") {
     $items = [];
+    $articles = $xpath->query("//article[contains(@class,'post')]");
 
-    $nodes = $xpath->query("//section[@id='$sectionId']//li[contains(@class,'status-publish')]");
+    foreach ($articles as $art) {
+        $titleNode  = $xpath->query(".//h2[contains(@class,'entry-title')]", $art)->item(0);
+        $imgNode    = $xpath->query(".//img", $art)->item(0);
+        $yearNode   = $xpath->query(".//span[contains(@class,'year')]", $art)->item(0);
+        $linkNode   = $xpath->query(".//a[contains(@class,'lnk-blk')]", $art)->item(0);
+        $ratingNode = $xpath->query(".//span[contains(@class,'vote')]", $art)->item(0);
 
-    foreach ($nodes as $li) {
-        $titleNode = $xpath->query(".//h2[@class='entry-title']", $li)->item(0);
-        $imgNode   = $xpath->query(".//img", $li)->item(0);
-        $yearNode  = $xpath->query(".//span[@class='year']", $li)->item(0);
-        $linkNode  = $xpath->query(".//a[contains(@class,'lnk-blk')]", $li)->item(0);
-        $ratingNode= $xpath->query(".//span[@class='vote']", $li)->item(0);
+        $title  = $titleNode ? trim(html_entity_decode($titleNode->textContent)) : null;
+        $image  = $imgNode ? $imgNode->getAttribute("src") : null;
+        $year   = $yearNode ? trim($yearNode->textContent) : null;
+        $link   = $linkNode ? $linkNode->getAttribute("href") : null;
+        $rating = $ratingNode ? trim(preg_replace('/\s+/', ' ', $ratingNode->textContent)) : null;
 
-        $title = $titleNode ? trim($titleNode->textContent) : null;
-        $image = $imgNode ? $imgNode->getAttribute("src") : null;
-        $year  = $yearNode ? trim($yearNode->textContent) : null;
-        $link  = $linkNode ? $linkNode->getAttribute("href") : null;
-        $rating= $ratingNode ? trim($ratingNode->textContent) : null;
-
-        // Determine ID instead of full URL
         $id = null;
         if ($link) {
-            if ($type === "series" && str_contains($link, "/series/")) {
-                $id = trim(str_replace("/series/", "", $link), "/");
-            } elseif ($type === "movie" && str_contains($link, "/movie/")) {
-                $id = trim(str_replace("/movie/", "", $link), "/");
+            $cleanPath = parse_url($link, PHP_URL_PATH);
+            $cleanPath = trim($cleanPath, "/");
+            if ($type === "series") {
+                $id = str_replace(["series/", "anime/"], "", $cleanPath);
+            } else {
+                $id = str_replace(["movies/", "movie/"], "", $cleanPath);
             }
         }
 
-        $items[] = [
-            "title"  => $title,
-            "image"  => $image,
-            "year"   => $year,
-            "rating" => $rating,
-            $type."Id" => $id
-        ];
+        if ($title) {
+            $items[] = [
+                "title"  => $title,
+                "image"  => $image,
+                "year"   => $year,
+                "rating" => $rating,
+                $type."Id" => $id
+            ];
+        }
     }
-
     return $items;
 }
 
-// Extract data using multiple potential layout selectors for robust safety
-$latestSeries = extractItems($xpath, "widget_list_movies_series-2", "series");
-if (empty($latestSeries)) {
-    $latestSeries = extractItems($xpath, "wdgt_movies_series-2", "series");
-}
-$latestMovies = extractItems($xpath, "widget_list_movies_series-3", "movie");
-if (empty($latestMovies)) {
-    $latestMovies = extractItems($xpath, "wdgt_movies_series-3", "movie");
-}
+$seriesRes = fetchHtmlWithFallback('/category/anime/');
+$moviesRes = fetchHtmlWithFallback('/category/movie/');
 
-// Final JSON response
+$latestSeries = isset($seriesRes['html']) ? parseArticles($seriesRes['html'], "series") : [];
+$latestMovies = isset($moviesRes['html']) ? parseArticles($moviesRes['html'], "movie") : [];
+
+$activeDomain = $seriesRes['active_domain'] ?? 'piratexplay.cc';
+
 echo json_encode([
     "success" => true,
     "source" => str_replace('https://', '', $activeDomain),

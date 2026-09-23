@@ -2,25 +2,19 @@
 header("Content-Type: application/json; charset=UTF-8");
 require_once 'config.php';
 
-// Get page param, default = 1
-$page = isset($_GET['p']) && is_numeric($_GET['p']) ? $_GET['p'] : 1;
+$page = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
 
-// Build URL path and Fetch HTML with resilient mirror tracking
-$moviesPath = "/movies?page=" . $page;
+$moviesPath = ($page > 1) ? "/category/movie/page/" . $page : "/category/movie/";
 $res = fetchHtmlWithFallback($moviesPath);
 
 if (isset($res['error'])) {
-    echo json_encode([
-        "success" => false,
-        "error" => "Failed to load HTML: " . $res['error']
-    ]);
+    echo json_encode(["success" => false, "error" => "Failed to load HTML: " . $res['error']]);
     exit;
 }
 
 $html = $res['html'];
 $activeDomain = $res['active_domain'];
 
-// Load DOM
 libxml_use_internal_errors(true);
 $dom = new DOMDocument();
 $dom->loadHTML($html);
@@ -28,59 +22,50 @@ libxml_clear_errors();
 
 $xpath = new DOMXPath($dom);
 
-// =======================
-// Extract movies
-// =======================
-$nodes = $xpath->query("//ul[contains(@class,'post-lst')]//li[contains(@class,'status-publish')]");
-
+$articles = $xpath->query("//article[contains(@class,'post')]");
 $movies = [];
 
-foreach ($nodes as $li) {
-
-    $titleNode  = $xpath->query(".//h2[contains(@class,'entry-title')]", $li)->item(0);
-    $imgNode    = $xpath->query(".//img", $li)->item(0);
-    $yearNode   = $xpath->query(".//span[contains(@class,'year')]", $li)->item(0);
-    $linkNode   = $xpath->query(".//a[contains(@class,'lnk-blk')]", $li)->item(0);
-    $ratingNode = $xpath->query(".//span[contains(@class,'vote')]", $li)->item(0);
+foreach ($articles as $art) {
+    $titleNode  = $xpath->query(".//h2[contains(@class,'entry-title')]", $art)->item(0);
+    $imgNode    = $xpath->query(".//img", $art)->item(0);
+    $yearNode   = $xpath->query(".//span[contains(@class,'year')]", $art)->item(0);
+    $linkNode   = $xpath->query(".//a[contains(@class,'lnk-blk')]", $art)->item(0);
+    $ratingNode = $xpath->query(".//span[contains(@class,'vote')]", $art)->item(0);
 
     $title  = $titleNode ? trim(html_entity_decode($titleNode->textContent)) : null;
     $image  = $imgNode ? $imgNode->getAttribute("src") : null;
     $year   = $yearNode ? trim($yearNode->textContent) : null;
     $link   = $linkNode ? $linkNode->getAttribute("href") : null;
-    $rating = $ratingNode ? trim($ratingNode->textContent) : null;
+    $rating = $ratingNode ? trim(preg_replace('/\s+/', ' ', $ratingNode->textContent)) : null;
 
-    // Extract movieId
     $movieId = null;
-    if ($link && str_contains($link, "/movie/")) {
-        $movieId = trim(str_replace("/movie/", "", $link), "/");
+    if ($link) {
+        $cleanPath = parse_url($link, PHP_URL_PATH);
+        $cleanPath = trim($cleanPath, "/");
+        $movieId   = str_replace(["movies/", "movie/"], "", $cleanPath);
     }
 
-    $movies[] = [
-        "title"   => $title,
-        "image"   => $image,
-        "year"    => $year,
-        "rating"  => $rating,
-        "movieId" => $movieId
-    ];
+    if ($title) {
+        $movies[] = [
+            "title"   => $title,
+            "image"   => $image,
+            "year"    => $year,
+            "rating"  => $rating,
+            "movieId" => $movieId
+        ];
+    }
 }
 
-// =======================
 // Pagination
-// =======================
 $pages = [];
-$currentPage = (int)$page;
+$currentPage = $page;
 $totalPages = 1;
-$hasNext = false;
-$hasPrev = false;
 
-$pageNodes = $xpath->query("//nav[contains(@class,'pagination')]//a[contains(@class,'page-link')]");
-
+$pageNodes = $xpath->query("//a[contains(@class,'page-link')]");
 foreach ($pageNodes as $pNode) {
     $num = trim($pNode->textContent);
-
     if (is_numeric($num)) {
         $pages[] = (int)$num;
-
         if (str_contains($pNode->getAttribute("class"), "current")) {
             $currentPage = (int)$num;
         }
@@ -94,9 +79,6 @@ if (!empty($pages)) {
 $hasNext = $currentPage < $totalPages;
 $hasPrev = $currentPage > 1;
 
-// =======================
-// Output JSON
-// =======================
 echo json_encode([
     "success" => true,
     "source" => str_replace('https://', '', $activeDomain) . "/movies",
