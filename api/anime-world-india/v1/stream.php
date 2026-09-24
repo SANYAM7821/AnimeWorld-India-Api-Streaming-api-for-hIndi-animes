@@ -72,52 +72,30 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
 
     // 2. Animesalt triggerEpisode JS fallback
     if (empty($servers)) {
-        $pattern = '/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\'](?:Episode\s*' . $cleanEp . '|ep-' . $cleanEp . ')["\']/is';
-        if (preg_match($pattern, $html, $m)) {
-            $rawJson = html_entity_decode($m[1]);
-            $parsed  = json_decode($rawJson, true);
-            if (is_array($parsed)) {
-                foreach ($parsed as $srv) {
-                    $sUrl  = $srv['url'] ?? null;
-                    $sLang = $srv['lang'] ?? '';
-                    $sName = $srv['name'] ?? 'HD';
-                    if ($sUrl) {
-                        if (!$streamLink) {
-                            $streamLink = $sUrl;
-                        }
-                        $servers[] = [
-                            "name" => ($sLang ? $sLang . " - " : "") . $sName,
-                            "url"  => $sUrl
-                        ];
-                    }
-                }
-            }
-        }
+        if (preg_match_all('/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\']([^"\']+)["\']/s', $html, $allMatches, PREG_SET_ORDER)) {
+            foreach ($allMatches as $match) {
+                $rawJson = html_entity_decode($match[1]);
+                $epLabel = $match[2]; // e.g. "Episode 15" or "ep-15"
 
-        // Generic triggerEpisode regex if specific episode pattern didn't match
-        if (empty($servers)) {
-            if (preg_match_all('/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\']([^"\']+)["\']/s', $html, $allMatches, PREG_SET_ORDER)) {
-                foreach ($allMatches as $match) {
-                    $epLabel = $match[2];
-                    if (preg_match('/' . $cleanEp . '$/i', $epLabel) || str_contains(strtolower($epLabel), "episode " . $cleanEp) || str_contains(strtolower($epLabel), "ep-" . $cleanEp)) {
-                        $rawJson = html_entity_decode($match[1]);
-                        $parsed  = json_decode($rawJson, true);
-                        if (is_array($parsed)) {
-                            foreach ($parsed as $srv) {
-                                $sUrl  = $srv['url'] ?? null;
-                                $sLang = $srv['lang'] ?? '';
-                                $sName = $srv['name'] ?? 'HD';
-                                if ($sUrl) {
-                                    if (!$streamLink) {
-                                        $streamLink = $sUrl;
-                                    }
-                                    $servers[] = [
-                                        "name" => ($sLang ? $sLang . " - " : "") . $sName,
-                                        "url"  => $sUrl
-                                    ];
+                if (preg_match('/\b' . $cleanEp . '\b/i', $epLabel) || str_contains(strtolower($epLabel), "episode " . $cleanEp) || str_contains(strtolower($epLabel), "ep-" . $cleanEp)) {
+                    $parsed = json_decode($rawJson, true);
+                    if (is_array($parsed)) {
+                        foreach ($parsed as $srv) {
+                            $sUrl  = $srv['url'] ?? null;
+                            $sLang = $srv['lang'] ?? '';
+                            $sName = $srv['name'] ?? 'HD';
+                            if ($sUrl) {
+                                if (!$streamLink) {
+                                    $streamLink = $sUrl;
                                 }
+                                $servers[] = [
+                                    "name" => ($sLang ? $sLang . " - " : "") . $sName,
+                                    "url"  => $sUrl
+                                ];
                             }
                         }
+                    }
+                    if (!empty($servers)) {
                         break;
                     }
                 }
@@ -269,24 +247,35 @@ if ($type === "movie") {
 
 $extractedStreams = $html ? parseStreamEmbedsFromHtml($html, $cleanEpNumber) : ['streamLink' => null, 'servers' => []];
 
-// 5. Automatic Animesalt Fallback if PirateXPlay returned 0 iframes or timed out
+// 5. Automatic Secondary Source Fallback (Animesalt) if PirateXPlay returned 0 iframes or timed out
 if (empty($extractedStreams['servers'])) {
-    // Try Animesalt fallback using series slug or AniList details
-    $fallbackSlug = preg_replace('/-season-\d+-\d+$/i', '', $episodeId);
-    $fallbackSlug = preg_replace('/-1x\d+$/i', '', $fallbackSlug);
+    $fallbackSlug = preg_replace('/(-season-\d+-\d+|-season-\d+|-1x\d+|\d+x\d+).*$/i', '', $episodeId);
+    $fallbackSlug = trim($fallbackSlug, "-");
 
     $asPaths = [
-        "/tv/" . $fallbackSlug . "/",
-        "/tv/" . str_replace("demon-slayer-", "", $fallbackSlug) . "/"
+        "https://animesalt.me/tv/" . $fallbackSlug . "/",
+        "https://animesalt.me/tv/" . str_replace("demon-slayer-", "", $fallbackSlug) . "/"
     ];
 
-    foreach ($asPaths as $asPath) {
-        $asRes = fetchHtmlWithFallback("https://animesalt.me" . $asPath);
+    if (!empty($anilistId)) {
+        $aniData = fetchAniListDetails($anilistId);
+        if ($aniData) {
+            if (!empty($aniData['title']['english'])) {
+                $asPaths[] = "https://animesalt.me/tv/" . strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $aniData['title']['english']), '-')) . "/";
+            }
+            if (!empty($aniData['title']['romaji'])) {
+                $asPaths[] = "https://animesalt.me/tv/" . strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $aniData['title']['romaji']), '-')) . "/";
+            }
+        }
+    }
+
+    foreach (array_unique($asPaths) as $asPath) {
+        $asRes = fetchHtmlWithFallback($asPath);
         if (isset($asRes['html'])) {
             $extractedFallback = parseStreamEmbedsFromHtml($asRes['html'], $cleanEpNumber);
             if (!empty($extractedFallback['servers'])) {
                 $extractedStreams = $extractedFallback;
-                $activeDomain = 'animesalt.me';
+                $activeDomain = $asRes['active_domain'];
                 break;
             }
         }
