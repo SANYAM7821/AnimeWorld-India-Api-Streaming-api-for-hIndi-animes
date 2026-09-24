@@ -225,6 +225,7 @@ function setRedisCache($key, $value, $ttlSeconds) {
    ========================================================================= */
 
 function fetchAniListDetails($anilistId) {
+    // 1. AniList GraphQL API
     $query = 'query ($id: Int) { Media (id: $id) { id type format title { romaji english native } synonyms } }';
     $body  = json_encode(['query' => $query, 'variables' => ['id' => (int)$anilistId]]);
 
@@ -236,10 +237,10 @@ function fetchAniListDetails($anilistId) {
             'Content-Type: application/json',
             'Accept: application/json',
             'Content-Length: ' . strlen($body),
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
         ],
         CURLOPT_POSTFIELDS => $body,
-        CURLOPT_TIMEOUT => 5,
+        CURLOPT_TIMEOUT => 8,
         CURLOPT_SSL_VERIFYPEER => false
     ]);
 
@@ -249,14 +250,27 @@ function fetchAniListDetails($anilistId) {
 
     if ($httpCode === 200 && $res) {
         $json = json_decode($res, true);
-        if (isset($json['data']['Media'])) {
+        if (isset($json['data']['Media']['title'])) {
             return $json['data']['Media'];
         }
     }
 
-    // Fallback: Jikan API (MyAnimeList database)
-    $jRes = fetchHtml("https://api.jikan.moe/v4/anime/" . $anilistId);
-    if (!isset($jRes['error']) && !empty($jRes)) {
+    // 2. Fallback: Jikan API (MyAnimeList database)
+    $ch2 = curl_init("https://api.jikan.moe/v4/anime/" . $anilistId);
+    curl_setopt_array($ch2, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Accept: application/json',
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        ],
+        CURLOPT_TIMEOUT => 8,
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
+    $jRes = curl_exec($ch2);
+    $jCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+    curl_close($ch2);
+
+    if ($jCode === 200 && $jRes) {
         $jJson = json_decode($jRes, true);
         if (isset($jJson['data']['title'])) {
             return [
