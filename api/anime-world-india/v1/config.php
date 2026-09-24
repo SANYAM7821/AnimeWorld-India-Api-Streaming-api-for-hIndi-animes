@@ -220,7 +220,7 @@ function setRedisCache($key, $value, $ttlSeconds) {
 }
 
 /* =========================================================================
-   ANILIST ID RESOLVER HELPER
+   ANILIST ID RESOLVER HELPER (With Jikan API Fallback)
    Maps AniList ID -> PirateXPlay Series/Movie Slug & Caches in Redis
    ========================================================================= */
 
@@ -235,6 +235,7 @@ function fetchAniListDetails($anilistId) {
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
             'Accept: application/json',
+            'Content-Length: ' . strlen($body),
             'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         ],
         CURLOPT_POSTFIELDS => $body,
@@ -252,6 +253,24 @@ function fetchAniListDetails($anilistId) {
             return $json['data']['Media'];
         }
     }
+
+    // Fallback: Jikan API (MyAnimeList database)
+    $jRes = fetchHtml("https://api.jikan.moe/v4/anime/" . $anilistId);
+    if (!isset($jRes['error']) && !empty($jRes)) {
+        $jJson = json_decode($jRes, true);
+        if (isset($jJson['data']['title'])) {
+            return [
+                'format' => $jJson['data']['type'] ?? 'TV',
+                'title'  => [
+                    'english' => $jJson['data']['title_english'] ?? $jJson['data']['title'],
+                    'romaji'  => $jJson['data']['title'] ?? '',
+                    'native'  => $jJson['data']['title_japanese'] ?? ''
+                ],
+                'synonyms' => []
+            ];
+        }
+    }
+
     return null;
 }
 
@@ -272,14 +291,14 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
         }
     }
 
-    // Fetch titles from AniList
+    // Fetch titles from AniList (with Jikan API fallback)
     $aniDetails = fetchAniListDetails($anilistId);
     if (!$aniDetails) {
         return null;
     }
 
     $format = strtolower($aniDetails['format'] ?? '');
-    $isMovieFormat = ($format === 'movie');
+    $isMovieFormat = ($format === 'movie' || $format === 'special');
 
     $titlesToTry = [];
     if (!empty($aniDetails['title']['english'])) {
