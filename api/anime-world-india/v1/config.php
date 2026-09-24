@@ -314,22 +314,33 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
     $format = strtolower($aniDetails['format'] ?? '');
     $isMovieFormat = ($format === 'movie' || $format === 'special');
 
-    $titlesToTry = [];
+    $rawTitles = [];
     if (!empty($aniDetails['title']['english'])) {
-        $titlesToTry[] = $aniDetails['title']['english'];
+        $rawTitles[] = $aniDetails['title']['english'];
     }
     if (!empty($aniDetails['title']['romaji'])) {
-        $titlesToTry[] = $aniDetails['title']['romaji'];
+        $rawTitles[] = $aniDetails['title']['romaji'];
     }
     if (!empty($aniDetails['synonyms'])) {
         foreach ($aniDetails['synonyms'] as $syn) {
             if (is_string($syn) && strlen($syn) > 2) {
-                $titlesToTry[] = $syn;
+                $rawTitles[] = $syn;
             }
         }
     }
 
-    foreach ($titlesToTry as $title) {
+    $titlesToTry = [];
+    foreach ($rawTitles as $t) {
+        $titlesToTry[] = $t;
+        // Strip season indicators e.g. "Season 3", "3rd Season", "Part 2", etc.
+        $baseTitle = preg_replace('/\s*(?:season\s*\d+|\d+(?:st|nd|rd|th)\s*season|part\s*\d+)/i', '', $t);
+        $baseTitle = trim($baseTitle);
+        if (strlen($baseTitle) > 2 && $baseTitle !== $t) {
+            $titlesToTry[] = $baseTitle;
+        }
+    }
+
+    foreach (array_unique($titlesToTry) as $title) {
         $cleanTitle = preg_replace('/[:!\?]+/', '', $title);
         $searchRes  = fetchHtmlWithFallback("/?s=" . urlencode($cleanTitle));
 
