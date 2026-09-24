@@ -84,17 +84,18 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
         }
     }
 
-    // 2. Animesalt triggerEpisode JS extraction
+    // 2. Animesalt triggerEpisode JS extraction (supporting &quot; and quotes)
     if (empty($servers)) {
-        if (preg_match_all('/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\']([^"\']+)["\']/s', $html, $allMatches, PREG_SET_ORDER)) {
+        if (preg_match_all('/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*(?:&quot;|["\'])(.*?)(?:&quot;|["\'])/s', $html, $allMatches, PREG_SET_ORDER)) {
             foreach ($allMatches as $match) {
                 $rawJson = html_entity_decode($match[1]);
-                $epLabel = trim($match[2]); // e.g. "Episode 15" or "ep-15"
+                $epLabel = trim(html_entity_decode($match[2])); // e.g. "Episode 15" or "ep-15"
 
                 if (preg_match('/^Episode\s*' . $cleanEp . '$/i', $epLabel) ||
                     preg_match('/^ep-' . $cleanEp . '$/i', $epLabel) ||
                     preg_match('/\bEpisode\s*' . $cleanEp . '\b/i', $epLabel) ||
-                    preg_match('/\bep-' . $cleanEp . '\b/i', $epLabel)) {
+                    preg_match('/\bep-' . $cleanEp . '\b/i', $epLabel) ||
+                    $epLabel === $cleanEp) {
 
                     $parsed = json_decode($rawJson, true);
                     if (is_array($parsed)) {
