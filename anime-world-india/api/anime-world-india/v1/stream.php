@@ -46,6 +46,10 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
     $servers = [];
     $streamLink = null;
 
+    if (empty($html) || strlen($html) < 100) {
+        return ['streamLink' => null, 'servers' => []];
+    }
+
     // 1. Try PirateXPlay iframe extraction (excluding YouTube / non-video / ad iframes)
     libxml_use_internal_errors(true);
     $dom = new DOMDocument();
@@ -268,11 +272,12 @@ if ($type === "movie") {
     $targetPaths = ["/movies/" . trim($movieId, "/") . "/", "/movie/" . trim($movieId, "/") . "/"];
     foreach ($targetPaths as $path) {
         $res = fetchHtmlWithFallback($path);
-        if (!isset($res['error'])) {
-            $html = $res['html'];
-            $activeDomain = $res['active_domain'];
-            $extractedStreams = parseStreamEmbedsFromHtml($html, $cleanEpNumber);
-            if (!empty($extractedStreams['servers'])) {
+        if (!isset($res['error']) && isset($res['html']) && strlen($res['html']) > 100) {
+            $testStreams = parseStreamEmbedsFromHtml($res['html'], $cleanEpNumber);
+            if (!empty($testStreams['servers'])) {
+                $html = $res['html'];
+                $activeDomain = $res['active_domain'];
+                $extractedStreams = $testStreams;
                 break;
             }
         }
@@ -300,7 +305,7 @@ if ($type === "movie") {
 
     foreach (array_unique($targetPaths) as $path) {
         $res = fetchHtmlWithFallback($path);
-        if (!isset($res['error']) && isset($res['html'])) {
+        if (!isset($res['error']) && isset($res['html']) && strlen($res['html']) > 100) {
             $testStreams = parseStreamEmbedsFromHtml($res['html'], $cleanEpNumber);
             if (!empty($testStreams['servers'])) {
                 $html = $res['html'];
@@ -340,7 +345,7 @@ if (empty($extractedStreams['servers'])) {
 
     foreach (array_unique($asPaths) as $asPath) {
         $asRes = fetchHtmlWithFallback($asPath);
-        if (isset($asRes['html'])) {
+        if (isset($asRes['html']) && strlen($asRes['html']) > 100) {
             $extractedFallback = parseStreamEmbedsFromHtml($asRes['html'], $cleanEpNumber);
             if (!empty($extractedFallback['servers'])) {
                 $extractedStreams = $extractedFallback;
