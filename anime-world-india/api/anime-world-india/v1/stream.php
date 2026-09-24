@@ -155,34 +155,25 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
         }
     }
 
-    // Check if Season 1 button exists if episode 1 was requested
+    // Check all season buttons
     $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')] | //a[contains(@href,'/series/')]");
-    $targetSeasonUrl = null;
-
     foreach ($seasonBtns as $sBtn) {
-        $seasonAttr = $sBtn->getAttribute("data-season");
         $href = $sBtn->getAttribute("href");
+        if ($href && str_contains($href, "/series/")) {
+            $sRes = fetchHtmlWithFallback(parse_url($href, PHP_URL_PATH));
+            if (isset($sRes['html'])) {
+                $sDom = new DOMDocument();
+                libxml_use_internal_errors(true);
+                $sDom->loadHTML($sRes['html']);
+                libxml_clear_errors();
+                $sXpath = new DOMXPath($sDom);
 
-        if ($seasonAttr === "1" || str_contains($href, "season-1")) {
-            $targetSeasonUrl = parse_url($href, PHP_URL_PATH);
-            break;
-        }
-    }
-
-    if ($targetSeasonUrl) {
-        $sRes = fetchHtmlWithFallback($targetSeasonUrl);
-        if (isset($sRes['html'])) {
-            $sDom = new DOMDocument();
-            libxml_use_internal_errors(true);
-            $sDom->loadHTML($sRes['html']);
-            libxml_clear_errors();
-            $sXpath = new DOMXPath($sDom);
-
-            $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
-            foreach ($sEpLinks as $a) {
-                $href = $a->getAttribute("href");
-                if (str_contains($href, "-1x" . $cleanEp . "/") || str_ends_with(rtrim($href, "/"), "-" . $cleanEp) || str_contains($href, "episode-" . $cleanEp)) {
-                    return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+                $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
+                foreach ($sEpLinks as $a) {
+                    $eHref = $a->getAttribute("href");
+                    if (str_contains($eHref, "x" . $cleanEp . "/") || str_contains($eHref, "-" . $cleanEp . "/")) {
+                        return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+                    }
                 }
             }
         }
@@ -193,16 +184,23 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
 
 // 1. Resolve AniList ID if provided
 if ($anilistId && !$episodeId && !$movieId) {
-    $resolvedSlug = resolveAniListToSlug($anilistId);
-    if ($resolvedSlug) {
-        $resolvedEp = resolveEpisodePageUrl($resolvedSlug, $epNum);
-        if ($resolvedEp) {
-            $episodeId = trim($resolvedEp['url'], "/");
-            if (str_starts_with($episodeId, "episode/")) {
-                $episodeId = str_replace("episode/", "", $episodeId);
-            }
+    $resolvedData = resolveAniListToSlug($anilistId);
+    if ($resolvedData && isset($resolvedData['slug'])) {
+        $resolvedSlug = $resolvedData['slug'];
+        $resolvedType = $resolvedData['type'] ?? 'series';
+
+        if ($resolvedType === 'movie') {
+            $movieId = $resolvedSlug;
         } else {
-            $episodeId = $resolvedSlug . "-1x" . $cleanEpNumber;
+            $resolvedEp = resolveEpisodePageUrl($resolvedSlug, $epNum);
+            if ($resolvedEp) {
+                $episodeId = trim($resolvedEp['url'], "/");
+                if (str_starts_with($episodeId, "episode/")) {
+                    $episodeId = str_replace("episode/", "", $episodeId);
+                }
+            } else {
+                $episodeId = $resolvedSlug . "-1x" . $cleanEpNumber;
+            }
         }
     } else {
         echo json_encode(["success" => false, "error" => "Could not resolve AniList ID: " . $anilistId]);
@@ -230,7 +228,7 @@ if (!$forceRefresh) {
 // 4. Live Scraping Execution
 $html = null;
 $activeDomain = null;
-$type = $episodeId ? "episode" : "movie";
+$type = $movieId ? "movie" : "episode";
 
 if ($type === "movie") {
     $targetPaths = ["/movies/" . trim($movieId, "/") . "/", "/movie/" . trim($movieId, "/") . "/"];
@@ -268,7 +266,7 @@ $extractedStreams = $html ? parseStreamEmbedsFromHtml($html, $cleanEpNumber) : [
 
 // 5. Automatic Secondary Source Fallback (Animesalt) if PirateXPlay returned 0 iframes or timed out
 if (empty($extractedStreams['servers'])) {
-    $fallbackSlug = preg_replace('/(-season-\d+-\d+|-season-\d+|-1x\d+|\d+x\d+).*$/i', '', $episodeId);
+    $fallbackSlug = preg_replace('/(-season-\d+-\d+|-season-\d+|-1x\d+|\d+x\d+).*$/i', '', $episodeId ?? $movieId);
     $fallbackSlug = trim($fallbackSlug, "-");
 
     $asPaths = [
@@ -301,8 +299,8 @@ if (empty($extractedStreams['servers'])) {
     }
 }
 
-$streamLink = $extractedStreams['streamLink'];
-$servers    = $extractedStreams['servers'];
+$streamLink   = $extractedStreams['streamLink'];
+$servers      = $extractedStreams['servers'];
 $downloadLink = $streamLink;
 
 if (empty($servers)) {
@@ -317,7 +315,7 @@ if (empty($servers)) {
     exit;
 }
 
-$titleText = "Episode " . $cleanEpNumber;
+$titleText = ($type === "movie") ? "Movie Stream" : "Episode " . $cleanEpNumber;
 
 /* Construct Lean & Fast JSON Response (Stream object at top, explicit TTL & Cache Mode in info) */
 $responseArray = [
@@ -341,8 +339,8 @@ $responseArray = [
 
 $jsonOutput = json_encode($responseArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-// 6. Save Fresh Stream Result to Upstash Redis
-if ($streamLink) {
+// 6. Save Fresh Stream Result to Upstash Redis ONLY if valid streamLink and servers exist!
+if ($streamLink && !empty($servers)) {
     setRedisCache($cacheKey, $jsonOutput, $ttlSeconds);
 }
 
