@@ -61,6 +61,19 @@ function fetchHtml($url) {
 }
 
 function fetchHtmlWithFallback($path) {
+    // If $path is already a full http/https URL, fetch it directly
+    if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+        $res = fetchHtml($path);
+        if (!isset($res['error']) && !empty($res) && strlen($res) > 100 && !str_contains($res, 'This domain is for sale')) {
+            $parsedHost = parse_url($path, PHP_URL_HOST);
+            return [
+                'html' => $res,
+                'active_domain' => $parsedHost
+            ];
+        }
+        return ["error" => $res['error'] ?? "Empty or invalid response from " . $path];
+    }
+
     $domains = SEARCH_DOMAINS;
     $lastError = "No domains available";
 
@@ -70,16 +83,16 @@ function fetchHtmlWithFallback($path) {
     }
 
     foreach ($domains as $domain) {
-        $targetUrl = str_starts_with($cleanPath, 'http') ? $cleanPath : $domain . $cleanPath;
+        $targetUrl = rtrim($domain, '/') . $cleanPath;
         $res = fetchHtml($targetUrl);
 
         if (!isset($res['error']) && !empty($res) && strlen($res) > 100 && !str_contains($res, 'This domain is for sale')) {
             return [
                 'html' => $res,
-                'active_domain' => $domain
+                'active_domain' => str_replace('https://', '', $domain)
             ];
         }
-        $lastError = isset($res['error']) ? $res['error'] : "Domain returned empty or invalid response";
+        $lastError = isset($res['error']) ? $res['error'] : "Domain returned empty response";
     }
 
     return ["error" => $lastError];
