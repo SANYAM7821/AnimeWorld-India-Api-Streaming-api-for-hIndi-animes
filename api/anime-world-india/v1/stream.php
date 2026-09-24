@@ -162,18 +162,19 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
         libxml_clear_errors();
         $xpath = new DOMXPath($dom);
 
-        // Search for episode link directly on current series page
-        // FIRST: Check for Season 1 exact match (-1x{cleanEp}/)
+        // FIRST PASS: Strictly match -1x{cleanEp}/ or season-1-.*-1x{cleanEp}/
         $epLinks = $xpath->query("//a[contains(@href,'/episode/')]");
         foreach ($epLinks as $a) {
             $href = $a->getAttribute("href");
-            if (str_contains($href, "-1x" . $cleanEp . "/") || (str_contains($href, "season-1-") && str_contains($href, "x" . $cleanEp . "/"))) {
+            if (preg_match('/-1x' . $cleanEp . '\//i', $href) || preg_match('/season-1-.*?-1x' . $cleanEp . '\//i', $href)) {
                 return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
             }
         }
+
+        // SECOND PASS: Match any season -\d+x{cleanEp}/
         foreach ($epLinks as $a) {
             $href = $a->getAttribute("href");
-            if (str_contains($href, "1x" . $cleanEp . "/") || str_contains($href, "-" . $cleanEp . "/")) {
+            if (preg_match('/-\d+x' . $cleanEp . '\//i', $href)) {
                 return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
             }
         }
@@ -215,13 +216,13 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
                     $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
                     foreach ($sEpLinks as $a) {
                         $eHref = $a->getAttribute("href");
-                        if (str_contains($eHref, "-1x" . $cleanEp . "/")) {
+                        if (preg_match('/-1x' . $cleanEp . '\//i', $eHref)) {
                             return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
                         }
                     }
                     foreach ($sEpLinks as $a) {
                         $eHref = $a->getAttribute("href");
-                        if (str_contains($eHref, "x" . $cleanEp . "/") || str_contains($eHref, "-" . $cleanEp . "/")) {
+                        if (preg_match('/-\d+x' . $cleanEp . '\//i', $eHref)) {
                             return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
                         }
                     }
