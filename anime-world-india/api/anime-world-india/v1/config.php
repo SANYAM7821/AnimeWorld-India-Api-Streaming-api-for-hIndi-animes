@@ -220,11 +220,20 @@ function setRedisCache($key, $value, $ttlSeconds) {
 }
 
 /* =========================================================================
-   ANILIST ID RESOLVER HELPER (With Ani.zip High-Reliability Fallback)
+   ANILIST ID RESOLVER HELPER (With Ani.zip High-Reliability Fallback & Redis Caching)
    Maps AniList ID -> PirateXPlay Series/Movie Slug & Caches in Redis
    ========================================================================= */
 
 function fetchAniListDetails($anilistId) {
+    $detailKey = "anilist_details_" . $anilistId;
+    $cachedDetail = getRedisCache($detailKey);
+    if ($cachedDetail && !empty($cachedDetail)) {
+        $decoded = json_decode($cachedDetail, true);
+        if ($decoded && isset($decoded['title'])) {
+            return $decoded;
+        }
+    }
+
     // 1. AniList GraphQL API
     $query = 'query ($id: Int) { Media (id: $id) { id type format title { romaji english native } synonyms } }';
     $body  = json_encode(['query' => $query, 'variables' => ['id' => (int)$anilistId]]);
@@ -251,7 +260,9 @@ function fetchAniListDetails($anilistId) {
     if ($httpCode === 200 && $res) {
         $json = json_decode($res, true);
         if (isset($json['data']['Media']['title'])) {
-            return $json['data']['Media'];
+            $media = $json['data']['Media'];
+            setRedisCache($detailKey, json_encode($media), 2592000);
+            return $media;
         }
     }
 
@@ -273,7 +284,7 @@ function fetchAniListDetails($anilistId) {
     if ($azCode === 200 && $azRes) {
         $azJson = json_decode($azRes, true);
         if (isset($azJson['titles'])) {
-            return [
+            $media = [
                 'format' => $azJson['mappings']['type'] ?? 'TV',
                 'title'  => [
                     'english' => $azJson['titles']['en'] ?? ($azJson['titles']['x-jat'] ?? ''),
@@ -283,6 +294,8 @@ function fetchAniListDetails($anilistId) {
                 'tmdb_id' => $azJson['mappings']['themoviedb_id'] ?? null,
                 'synonyms' => []
             ];
+            setRedisCache($detailKey, json_encode($media), 2592000);
+            return $media;
         }
     }
 
