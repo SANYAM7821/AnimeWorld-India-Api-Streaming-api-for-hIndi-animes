@@ -94,6 +94,7 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
                 if (preg_match('/^Episode\s*' . $cleanEp . '$/i', $epLabel) ||
                     preg_match('/^ep-' . $cleanEp . '$/i', $epLabel) ||
                     preg_match('/\bEpisode\s*' . $cleanEp . '\b/i', $epLabel) ||
+                    preg_match('/\bEP\s*' . $cleanEp . '\b/i', $epLabel) ||
                     preg_match('/\bep-' . $cleanEp . '\b/i', $epLabel) ||
                     $epLabel === $cleanEp) {
 
@@ -130,6 +131,7 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
 
 function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
     $cleanEp = preg_replace('/[^0-9]/', '', $epNumber) ?: '1';
+    $targetEpInt = (int)$cleanEp;
 
     $seriesPath = str_starts_with($seriesSlug, "/") ? $seriesSlug : "/series/" . $seriesSlug . "/";
     $res = fetchHtmlWithFallback($seriesPath);
@@ -157,10 +159,30 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
 
     // Check all season buttons
     $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')] | //a[contains(@href,'/series/')]");
+    $seasonUrls = [];
+
     foreach ($seasonBtns as $sBtn) {
         $href = $sBtn->getAttribute("href");
         if ($href && str_contains($href, "/series/")) {
-            $sRes = fetchHtmlWithFallback(parse_url($href, PHP_URL_PATH));
+            $seasonUrls[] = parse_url($href, PHP_URL_PATH);
+        }
+    }
+
+    // Estimate season URLs for long multi-season shows
+    if (preg_match('/^(.*?)-season-\d+-(.*)$/i', $seriesSlug, $m)) {
+        $basePre = $m[1];
+        $basePost = $m[2];
+        $estSeason = (int)ceil($targetEpInt / 50);
+        if ($estSeason < 1) $estSeason = 1;
+
+        $seasonUrls[] = "/series/{$basePre}-season-{$estSeason}-{$basePost}/";
+        $seasonUrls[] = "/series/{$basePre}-season-" . ($estSeason + 1) . "-{$basePost}/";
+        $seasonUrls[] = "/series/{$basePre}-season-" . max(1, $estSeason - 1) . "-{$basePost}/";
+    }
+
+    foreach (array_unique($seasonUrls) as $sUrl) {
+        if (!empty($sUrl)) {
+            $sRes = fetchHtmlWithFallback($sUrl);
             if (isset($sRes['html'])) {
                 $sDom = new DOMDocument();
                 libxml_use_internal_errors(true);
@@ -266,7 +288,8 @@ $extractedStreams = $html ? parseStreamEmbedsFromHtml($html, $cleanEpNumber) : [
 
 // 5. Automatic Secondary Source Fallback (Animesalt) if PirateXPlay returned 0 iframes or timed out
 if (empty($extractedStreams['servers'])) {
-    $fallbackSlug = preg_replace('/(-season-\d+-\d+|-season-\d+|-1x\d+|\d+x\d+).*$/i', '', $episodeId ?? $movieId);
+    $rawSlug = $episodeId ?? $movieId;
+    $fallbackSlug = preg_replace('/(-season-\d+-\d+|-season-\d+|-1x\d+|\d+x\d+).*$/i', '', $rawSlug);
     $fallbackSlug = trim($fallbackSlug, "-");
 
     $asPaths = [
