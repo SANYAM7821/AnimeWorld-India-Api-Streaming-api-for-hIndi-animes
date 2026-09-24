@@ -220,7 +220,7 @@ function setRedisCache($key, $value, $ttlSeconds) {
 }
 
 /* =========================================================================
-   ANILIST ID RESOLVER HELPER (With Jikan API Fallback)
+   ANILIST ID RESOLVER HELPER (With Ani.zip High-Reliability Fallback)
    Maps AniList ID -> PirateXPlay Series/Movie Slug & Caches in Redis
    ========================================================================= */
 
@@ -255,8 +255,8 @@ function fetchAniListDetails($anilistId) {
         }
     }
 
-    // 2. Fallback: Jikan API (MyAnimeList database)
-    $ch2 = curl_init("https://api.jikan.moe/v4/anime/" . $anilistId);
+    // 2. High-reliability Fallback: Ani.zip Mappings API
+    $ch2 = curl_init("https://api.ani.zip/mappings?anilist_id=" . (int)$anilistId);
     curl_setopt_array($ch2, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => [
@@ -266,20 +266,21 @@ function fetchAniListDetails($anilistId) {
         CURLOPT_TIMEOUT => 8,
         CURLOPT_SSL_VERIFYPEER => false
     ]);
-    $jRes = curl_exec($ch2);
-    $jCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+    $azRes = curl_exec($ch2);
+    $azCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
     curl_close($ch2);
 
-    if ($jCode === 200 && $jRes) {
-        $jJson = json_decode($jRes, true);
-        if (isset($jJson['data']['title'])) {
+    if ($azCode === 200 && $azRes) {
+        $azJson = json_decode($azRes, true);
+        if (isset($azJson['titles'])) {
             return [
-                'format' => $jJson['data']['type'] ?? 'TV',
+                'format' => $azJson['mappings']['type'] ?? 'TV',
                 'title'  => [
-                    'english' => $jJson['data']['title_english'] ?? $jJson['data']['title'],
-                    'romaji'  => $jJson['data']['title'] ?? '',
-                    'native'  => $jJson['data']['title_japanese'] ?? ''
+                    'english' => $azJson['titles']['en'] ?? ($azJson['titles']['x-jat'] ?? ''),
+                    'romaji'  => $azJson['titles']['x-jat'] ?? ($azJson['titles']['en'] ?? ''),
+                    'native'  => $azJson['titles']['ja'] ?? ''
                 ],
+                'tmdb_id' => $azJson['mappings']['themoviedb_id'] ?? null,
                 'synonyms' => []
             ];
         }
@@ -305,7 +306,7 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
         }
     }
 
-    // Fetch titles from AniList (with Jikan API fallback)
+    // Fetch titles from AniList (with Ani.zip fallback)
     $aniDetails = fetchAniListDetails($anilistId);
     if (!$aniDetails) {
         return null;
@@ -327,6 +328,11 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
                 $rawTitles[] = $syn;
             }
         }
+    }
+
+    // Also include TMDB ID search if provided by Ani.zip
+    if (!empty($aniDetails['tmdb_id'])) {
+        $rawTitles[] = (string)$aniDetails['tmdb_id'];
     }
 
     $titlesToTry = [];
