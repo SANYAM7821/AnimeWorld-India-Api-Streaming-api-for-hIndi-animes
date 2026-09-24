@@ -221,18 +221,22 @@ function setRedisCache($key, $value, $ttlSeconds) {
 
 /* =========================================================================
    ANILIST ID RESOLVER HELPER
-   Maps AniList ID -> PirateXPlay Series Slug & Caches in Redis
+   Maps AniList ID -> PirateXPlay Series/Movie Slug & Caches in Redis
    ========================================================================= */
 
 function fetchAniListDetails($anilistId) {
-    $query = 'query ($id: Int) { Media (id: $id, type: ANIME) { title { romaji english native } synonyms } }';
+    $query = 'query ($id: Int) { Media (id: $id) { id type format title { romaji english native } synonyms } }';
     $body  = json_encode(['query' => $query, 'variables' => ['id' => (int)$anilistId]]);
 
     $ch = curl_init('https://graphql.anilist.co');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        ],
         CURLOPT_POSTFIELDS => $body,
         CURLOPT_TIMEOUT => 5,
         CURLOPT_SSL_VERIFYPEER => false
@@ -251,13 +255,21 @@ function fetchAniListDetails($anilistId) {
     return null;
 }
 
-function resolveAniListToSlug($anilistId) {
+function resolveAniListToSlug($anilistId, $forceRefresh = false) {
     $mappingKey = "mapping_anilist_" . $anilistId;
 
-    // Check Redis mapping cache
-    $cachedSlug = getRedisCache($mappingKey);
-    if ($cachedSlug && !empty($cachedSlug)) {
-        return $cachedSlug;
+    // Check Redis mapping cache if not force refreshing
+    if (!$forceRefresh) {
+        $cachedData = getRedisCache($mappingKey);
+        if ($cachedData && !empty($cachedData)) {
+            $decoded = json_decode($cachedData, true);
+            if ($decoded && isset($decoded['slug']) && !empty($decoded['slug'])) {
+                return $decoded;
+            }
+            if (is_string($cachedData) && strlen($cachedData) > 2) {
+                return ['type' => 'series', 'slug' => $cachedData];
+            }
+        }
     }
 
     // Fetch titles from AniList
@@ -265,6 +277,9 @@ function resolveAniListToSlug($anilistId) {
     if (!$aniDetails) {
         return null;
     }
+
+    $format = strtolower($aniDetails['format'] ?? '');
+    $isMovieFormat = ($format === 'movie');
 
     $titlesToTry = [];
     if (!empty($aniDetails['title']['english'])) {
@@ -282,7 +297,9 @@ function resolveAniListToSlug($anilistId) {
     }
 
     foreach ($titlesToTry as $title) {
-        $searchRes = fetchHtmlWithFallback("/?s=" . urlencode($title));
+        $cleanTitle = preg_replace('/[:!\?]+/', '', $title);
+        $searchRes  = fetchHtmlWithFallback("/?s=" . urlencode($cleanTitle));
+
         if (isset($searchRes['html'])) {
             libxml_use_internal_errors(true);
             $dom = new DOMDocument();
@@ -295,13 +312,20 @@ function resolveAniListToSlug($anilistId) {
                 $linkNode = $xpath->query(".//a[contains(@class,'lnk-blk')]", $art)->item(0);
                 if ($linkNode) {
                     $link = $linkNode->getAttribute("href");
-                    if ($link && str_contains($link, "series")) {
+                    if ($link) {
                         $cleanPath = parse_url($link, PHP_URL_PATH);
-                        $foundSlug = trim(str_replace("/series/", "", $cleanPath), "/");
-                        if ($foundSlug) {
-                            // Save mapping in Redis permanently (30 Days TTL)
-                            setRedisCache($mappingKey, $foundSlug, 2592000);
-                            return $foundSlug;
+                        $foundSlug = trim($cleanPath, "/");
+
+                        if (str_contains($link, "movie") || $isMovieFormat) {
+                            $foundSlug = str_replace(["movies/", "movie/"], "", $foundSlug);
+                            $result = ['type' => 'movie', 'slug' => $foundSlug];
+                            setRedisCache($mappingKey, json_encode($result), 2592000);
+                            return $result;
+                        } elseif (str_contains($link, "series")) {
+                            $foundSlug = str_replace("series/", "", $foundSlug);
+                            $result = ['type' => 'series', 'slug' => $foundSlug];
+                            setRedisCache($mappingKey, json_encode($result), 2592000);
+                            return $result;
                         }
                     }
                 }

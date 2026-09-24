@@ -184,7 +184,7 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
 
 // 1. Resolve AniList ID if provided
 if ($anilistId && !$episodeId && !$movieId) {
-    $resolvedData = resolveAniListToSlug($anilistId);
+    $resolvedData = resolveAniListToSlug($anilistId, $forceRefresh);
     if ($resolvedData && isset($resolvedData['slug'])) {
         $resolvedSlug = $resolvedData['slug'];
         $resolvedType = $resolvedData['type'] ?? 'series';
