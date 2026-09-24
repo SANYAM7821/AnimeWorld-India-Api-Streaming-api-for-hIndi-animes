@@ -251,6 +251,7 @@ if (!$forceRefresh) {
 $html = null;
 $activeDomain = null;
 $type = $movieId ? "movie" : "episode";
+$extractedStreams = ['streamLink' => null, 'servers' => []];
 
 if ($type === "movie") {
     $targetPaths = ["/movies/" . trim($movieId, "/") . "/", "/movie/" . trim($movieId, "/") . "/"];
@@ -259,32 +260,45 @@ if ($type === "movie") {
         if (!isset($res['error'])) {
             $html = $res['html'];
             $activeDomain = $res['active_domain'];
-            break;
+            $extractedStreams = parseStreamEmbedsFromHtml($html, $cleanEpNumber);
+            if (!empty($extractedStreams['servers'])) {
+                break;
+            }
         }
     }
 } else {
     $targetPaths = ["/episode/" . trim($episodeId, "/") . "/", "/watch/" . trim($episodeId, "/") . "/"];
 
-    if (preg_match('/^(.*?)-1x(\d+)$/', $episodeId, $matches)) {
-        $seriesBase = $matches[1];
-        $epNumber   = $matches[2];
-        $resolvedEp = resolveEpisodePageUrl($seriesBase, $epNumber);
-        if ($resolvedEp) {
-            $targetPaths[] = $resolvedEp['url'];
+    // Generate candidate season/episode paths for multi-season shows
+    if (preg_match('/^(.*?)-season-\d+-(.*)$/i', $episodeId, $matches)) {
+        $seriesPre  = $matches[1];
+        $seriesPost = $matches[2];
+        if (preg_match('/(?:x|-)(\d+)$/i', $episodeId, $epM)) {
+            $epNumVal = (int)$epM[1];
+            $estS = (int)ceil($epNumVal / 50);
+            if ($estS < 1) $estS = 1;
+
+            $targetPaths[] = "/episode/{$seriesPre}-season-{$estS}-{$seriesPost}-{$estS}x{$epNumVal}/";
+            $targetPaths[] = "/episode/{$seriesPre}-season-1-{$seriesPost}-1x{$epNumVal}/";
+            $targetPaths[] = "/episode/{$seriesPre}-season-2-{$seriesPost}-2x{$epNumVal}/";
+            $targetPaths[] = "/episode/{$seriesPre}-season-3-{$seriesPost}-3x{$epNumVal}/";
+            $targetPaths[] = "/episode/{$seriesPre}-season-4-{$seriesPost}-4x{$epNumVal}/";
         }
     }
 
-    foreach ($targetPaths as $path) {
+    foreach (array_unique($targetPaths) as $path) {
         $res = fetchHtmlWithFallback($path);
-        if (!isset($res['error'])) {
-            $html = $res['html'];
-            $activeDomain = $res['active_domain'];
-            break;
+        if (!isset($res['error']) && isset($res['html'])) {
+            $testStreams = parseStreamEmbedsFromHtml($res['html'], $cleanEpNumber);
+            if (!empty($testStreams['servers'])) {
+                $html = $res['html'];
+                $activeDomain = $res['active_domain'];
+                $extractedStreams = $testStreams;
+                break;
+            }
         }
     }
 }
-
-$extractedStreams = $html ? parseStreamEmbedsFromHtml($html, $cleanEpNumber) : ['streamLink' => null, 'servers' => []];
 
 // 5. Automatic Secondary Source Fallback (Animesalt) if PirateXPlay returned 0 iframes or timed out
 if (empty($extractedStreams['servers'])) {
