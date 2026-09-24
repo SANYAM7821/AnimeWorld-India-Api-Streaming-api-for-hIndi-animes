@@ -64,19 +64,22 @@ function fetchHtmlWithFallback($path) {
     $domains = SEARCH_DOMAINS;
     $lastError = "No domains available";
 
-    $cleanPath = (str_starts_with($path, '/') || str_starts_with($path, 'http')) ? $path : '/' . $path;
+    $cleanPath = '/' . ltrim($path, '/');
+    if (!str_contains($cleanPath, '?') && !str_ends_with($cleanPath, '/')) {
+        $cleanPath .= '/';
+    }
 
     foreach ($domains as $domain) {
         $targetUrl = str_starts_with($cleanPath, 'http') ? $cleanPath : $domain . $cleanPath;
         $res = fetchHtml($targetUrl);
 
-        if (!isset($res['error']) && !empty($res) && !str_contains($res, 'This domain is for sale')) {
+        if (!isset($res['error']) && !empty($res) && strlen($res) > 100 && !str_contains($res, 'This domain is for sale')) {
             return [
                 'html' => $res,
                 'active_domain' => $domain
             ];
         }
-        $lastError = isset($res['error']) ? $res['error'] : "Domain returned empty response";
+        $lastError = isset($res['error']) ? $res['error'] : "Domain returned empty or invalid response";
     }
 
     return ["error" => $lastError];
