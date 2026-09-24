@@ -289,7 +289,10 @@ $extractedStreams = $html ? parseStreamEmbedsFromHtml($html, $cleanEpNumber) : [
 // 5. Automatic Secondary Source Fallback (Animesalt) if PirateXPlay returned 0 iframes or timed out
 if (empty($extractedStreams['servers'])) {
     $rawSlug = $episodeId ?? $movieId;
-    $fallbackSlug = preg_replace('/(-season-\d+-\d+|-season-\d+|-1x\d+|\d+x\d+).*$/i', '', $rawSlug);
+    $fallbackSlug = preg_replace('/-season-\d+-\d+/i', '', $rawSlug);
+    $fallbackSlug = preg_replace('/-season-\d+/i', '', $fallbackSlug);
+    $fallbackSlug = preg_replace('/-\d+x\d+$/i', '', $fallbackSlug);
+    $fallbackSlug = preg_replace('/-\d+$/i', '', $fallbackSlug);
     $fallbackSlug = trim($fallbackSlug, "-");
 
     $asPaths = [
