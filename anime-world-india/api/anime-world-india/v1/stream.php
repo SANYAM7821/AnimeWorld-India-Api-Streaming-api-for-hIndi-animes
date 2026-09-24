@@ -24,12 +24,26 @@ $cacheMode   = $isOngoing ? "12 Hours Cache (Ongoing Anime)" : "30 Days Cache (C
 
 $cleanEpNumber = preg_replace('/[^0-9]/', '', $epNum) ?: '1';
 
+// Helper to filter out non-video iframes (e.g. YouTube trailers, ads, social embeds)
+function isIgnoredIframeUrl($url) {
+    if (empty($url) || str_contains($url, "about:blank")) {
+        return true;
+    }
+    $ignoredKeywords = ['youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 'google.com', 'doubleclick', 'disqus'];
+    foreach ($ignoredKeywords as $kw) {
+        if (str_contains(strtolower($url), $kw)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Helper function to extract servers from HTML (supports PirateXPlay iframes & Animesalt JS triggers)
 function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
     $servers = [];
     $streamLink = null;
 
-    // 1. Try PirateXPlay iframe extraction
+    // 1. Try PirateXPlay iframe extraction (excluding YouTube / non-video iframes)
     libxml_use_internal_errors(true);
     $dom = new DOMDocument();
     $dom->loadHTML($html);
@@ -42,7 +56,7 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
         $dataSrc = $iframe->getAttribute("data-src");
         $url     = $src ? $src : $dataSrc;
 
-        if ($url && !str_contains($url, "about:blank")) {
+        if ($url && !isIgnoredIframeUrl($url)) {
             if (!$streamLink) {
                 $streamLink = $url;
             }
@@ -57,7 +71,7 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
     if (empty($servers)) {
         if (preg_match_all('/<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']/i', $html, $matches)) {
             foreach ($matches[1] as $url) {
-                if ($url && !str_contains($url, "about:blank")) {
+                if ($url && !isIgnoredIframeUrl($url)) {
                     if (!$streamLink) {
                         $streamLink = $url;
                     }
@@ -70,14 +84,18 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
         }
     }
 
-    // 2. Animesalt triggerEpisode JS fallback
+    // 2. Animesalt triggerEpisode JS extraction
     if (empty($servers)) {
         if (preg_match_all('/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\']([^"\']+)["\']/s', $html, $allMatches, PREG_SET_ORDER)) {
             foreach ($allMatches as $match) {
                 $rawJson = html_entity_decode($match[1]);
-                $epLabel = $match[2]; // e.g. "Episode 15" or "ep-15"
+                $epLabel = trim($match[2]); // e.g. "Episode 15" or "ep-15"
 
-                if (preg_match('/\b' . $cleanEp . '\b/i', $epLabel) || str_contains(strtolower($epLabel), "episode " . $cleanEp) || str_contains(strtolower($epLabel), "ep-" . $cleanEp)) {
+                if (preg_match('/^Episode\s*' . $cleanEp . '$/i', $epLabel) ||
+                    preg_match('/^ep-' . $cleanEp . '$/i', $epLabel) ||
+                    preg_match('/\bEpisode\s*' . $cleanEp . '\b/i', $epLabel) ||
+                    preg_match('/\bep-' . $cleanEp . '\b/i', $epLabel)) {
+
                     $parsed = json_decode($rawJson, true);
                     if (is_array($parsed)) {
                         foreach ($parsed as $srv) {
