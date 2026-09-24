@@ -152,13 +152,13 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
     $epLinks = $xpath->query("//a[contains(@href,'/episode/')]");
     foreach ($epLinks as $a) {
         $href = $a->getAttribute("href");
-        if (str_contains($href, "-1x" . $cleanEp . "/") || str_ends_with(rtrim($href, "/"), "-" . $cleanEp)) {
+        if (str_contains($href, "x" . $cleanEp . "/") || str_contains($href, "-" . $cleanEp . "/")) {
             return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
         }
     }
 
-    // Check all season buttons
-    $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')] | //a[contains(@href,'/series/')]");
+    // Check ONLY actual season button links (avoiding random sidebar/footer links)
+    $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')]");
     $seasonUrls = [];
 
     foreach ($seasonBtns as $sBtn) {
