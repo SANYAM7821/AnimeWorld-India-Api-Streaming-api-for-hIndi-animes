@@ -325,6 +325,48 @@ if (empty($extractedStreams['servers'])) {
     }
 }
 
+// 6. Direct Blakite Embed Fallback if $servers is still empty and TMDB ID is available
+if (empty($extractedStreams['servers'])) {
+    $tmdbId = null;
+    $rawSlug = $episodeId ?? $movieId;
+    if (preg_match('/-(\d+)$/', $rawSlug, $tmM)) {
+        $tmdbId = $tmM[1];
+    } elseif (!empty($anilistId)) {
+        $aniData = fetchAniListDetails($anilistId);
+        if (!empty($aniData['tmdb_id'])) {
+            $tmdbId = $aniData['tmdb_id'];
+        }
+    }
+
+    if ($tmdbId) {
+        $estSeason = (int)ceil((int)$cleanEpNumber / 50);
+        if ($estSeason < 1) $estSeason = 1;
+
+        $bServers = [];
+        $bStreamLink = null;
+        $candidateSeasons = array_unique([$estSeason, 1, 2, 3, 4]);
+
+        foreach ($candidateSeasons as $sNum) {
+            $bUrl = "https://blakiteapi.xyz/embed/{$tmdbId}/{$sNum}-{$cleanEpNumber}";
+            if (!$bStreamLink) {
+                $bStreamLink = $bUrl;
+            }
+            $bServers[] = [
+                "name" => "Server " . (count($bServers) + 1) . " (CDN S{$sNum})",
+                "url"  => $bUrl
+            ];
+        }
+
+        if (!empty($bServers)) {
+            $extractedStreams = [
+                'streamLink' => $bStreamLink,
+                'servers'    => $bServers
+            ];
+            $activeDomain = 'blakiteapi.xyz';
+        }
+    }
+}
+
 $streamLink   = $extractedStreams['streamLink'];
 $servers      = $extractedStreams['servers'];
 $downloadLink = $streamLink;
@@ -365,7 +407,7 @@ $responseArray = [
 
 $jsonOutput = json_encode($responseArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-// 6. Save Fresh Stream Result to Upstash Redis ONLY if valid streamLink and servers exist!
+// 7. Save Fresh Stream Result to Upstash Redis ONLY if valid streamLink and servers exist!
 if ($streamLink && !empty($servers)) {
     setRedisCache($cacheKey, $jsonOutput, $ttlSeconds);
 }
