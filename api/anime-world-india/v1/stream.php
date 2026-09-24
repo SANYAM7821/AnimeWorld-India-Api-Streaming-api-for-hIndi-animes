@@ -360,7 +360,7 @@ if (empty($extractedStreams['servers'])) {
 if (empty($extractedStreams['servers'])) {
     $tmdbId = null;
     $rawSlug = $episodeId ?? $movieId;
-    if (preg_match('/-(\d+)$/', $rawSlug, $tmM)) {
+    if (preg_match('/-(\d+)(?:-\d+x\d+|-\d+)?$/i', $rawSlug, $tmM)) {
         $tmdbId = $tmM[1];
     } elseif (!empty($anilistId)) {
         $aniData = fetchAniListDetails($anilistId);
