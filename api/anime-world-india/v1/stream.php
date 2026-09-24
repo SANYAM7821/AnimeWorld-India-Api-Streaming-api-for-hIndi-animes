@@ -22,11 +22,119 @@ $ttlSeconds  = $isOngoing ? 43200 : 2592000; // 12 Hours (43200s) for Ongoing, 3
 $ttlLabel    = $isOngoing ? "12 Hours (43200s - Ongoing Series)" : "30 Days (2592000s - Completed Series)";
 $cacheMode   = $isOngoing ? "12 Hours Cache (Ongoing Anime)" : "30 Days Cache (Completed Anime)";
 
-// Helper function to find episode URL on PirateXPlay
+$cleanEpNumber = preg_replace('/[^0-9]/', '', $epNum) ?: '1';
+
+// Helper function to extract servers from HTML (supports PirateXPlay iframes & Animesalt JS triggers)
+function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
+    $servers = [];
+    $streamLink = null;
+
+    // 1. Try PirateXPlay iframe extraction
+    libxml_use_internal_errors(true);
+    $dom = new DOMDocument();
+    $dom->loadHTML($html);
+    libxml_clear_errors();
+    $xpath = new DOMXPath($dom);
+
+    $iframeNodes = $xpath->query("//iframe");
+    foreach ($iframeNodes as $iframe) {
+        $src     = $iframe->getAttribute("src");
+        $dataSrc = $iframe->getAttribute("data-src");
+        $url     = $src ? $src : $dataSrc;
+
+        if ($url && !str_contains($url, "about:blank")) {
+            if (!$streamLink) {
+                $streamLink = $url;
+            }
+            $servers[] = [
+                "name" => "Server " . (count($servers) + 1),
+                "url"  => $url
+            ];
+        }
+    }
+
+    // Regex fallback if XPath misses iframes
+    if (empty($servers)) {
+        if (preg_match_all('/<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']/i', $html, $matches)) {
+            foreach ($matches[1] as $url) {
+                if ($url && !str_contains($url, "about:blank")) {
+                    if (!$streamLink) {
+                        $streamLink = $url;
+                    }
+                    $servers[] = [
+                        "name" => "Server " . (count($servers) + 1),
+                        "url"  => $url
+                    ];
+                }
+            }
+        }
+    }
+
+    // 2. Animesalt triggerEpisode JS fallback
+    if (empty($servers)) {
+        $pattern = '/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\'](?:Episode\s*' . $cleanEp . '|ep-' . $cleanEp . ')["\']/is';
+        if (preg_match($pattern, $html, $m)) {
+            $rawJson = html_entity_decode($m[1]);
+            $parsed  = json_decode($rawJson, true);
+            if (is_array($parsed)) {
+                foreach ($parsed as $srv) {
+                    $sUrl  = $srv['url'] ?? null;
+                    $sLang = $srv['lang'] ?? '';
+                    $sName = $srv['name'] ?? 'HD';
+                    if ($sUrl) {
+                        if (!$streamLink) {
+                            $streamLink = $sUrl;
+                        }
+                        $servers[] = [
+                            "name" => ($sLang ? $sLang . " - " : "") . $sName,
+                            "url"  => $sUrl
+                        ];
+                    }
+                }
+            }
+        }
+
+        // Generic triggerEpisode regex if specific episode pattern didn't match
+        if (empty($servers)) {
+            if (preg_match_all('/triggerEpisode\(\s*(\[\s*\{.*?\}\s*\])\s*,\s*["\']([^"\']+)["\']/s', $html, $allMatches, PREG_SET_ORDER)) {
+                foreach ($allMatches as $match) {
+                    $epLabel = $match[2];
+                    if (preg_match('/' . $cleanEp . '$/i', $epLabel) || str_contains(strtolower($epLabel), "episode " . $cleanEp) || str_contains(strtolower($epLabel), "ep-" . $cleanEp)) {
+                        $rawJson = html_entity_decode($match[1]);
+                        $parsed  = json_decode($rawJson, true);
+                        if (is_array($parsed)) {
+                            foreach ($parsed as $srv) {
+                                $sUrl  = $srv['url'] ?? null;
+                                $sLang = $srv['lang'] ?? '';
+                                $sName = $srv['name'] ?? 'HD';
+                                if ($sUrl) {
+                                    if (!$streamLink) {
+                                        $streamLink = $sUrl;
+                                    }
+                                    $servers[] = [
+                                        "name" => ($sLang ? $sLang . " - " : "") . $sName,
+                                        "url"  => $sUrl
+                                    ];
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return [
+        'streamLink' => $streamLink,
+        'servers'    => $servers
+    ];
+}
+
 function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
     $cleanEp = preg_replace('/[^0-9]/', '', $epNumber) ?: '1';
 
-    $seriesPath = str_starts_with($seriesSlug, "/") ? $seriesSlug : "/series/" . $seriesSlug;
+    $seriesPath = str_starts_with($seriesSlug, "/") ? $seriesSlug : "/series/" . $seriesSlug . "/";
     $res = fetchHtmlWithFallback($seriesPath);
     if (!isset($res['html'])) {
         return null;
@@ -45,7 +153,7 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
     $epLinks = $xpath->query("//a[contains(@href,'/episode/')]");
     foreach ($epLinks as $a) {
         $href = $a->getAttribute("href");
-        if (str_contains($href, "-1x" . $cleanEp) || str_ends_with(rtrim($href, "/"), "-" . $cleanEp)) {
+        if (str_contains($href, "-1x" . $cleanEp . "/") || str_ends_with(rtrim($href, "/"), "-" . $cleanEp)) {
             return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
         }
     }
@@ -76,7 +184,7 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
             $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
             foreach ($sEpLinks as $a) {
                 $href = $a->getAttribute("href");
-                if (str_contains($href, "-1x" . $cleanEp) || str_ends_with(rtrim($href, "/"), "-" . $cleanEp) || str_contains($href, "episode-" . $cleanEp)) {
+                if (str_contains($href, "-1x" . $cleanEp . "/") || str_ends_with(rtrim($href, "/"), "-" . $cleanEp) || str_contains($href, "episode-" . $cleanEp)) {
                     return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
                 }
             }
@@ -97,8 +205,7 @@ if ($anilistId && !$episodeId && !$movieId) {
                 $episodeId = str_replace("episode/", "", $episodeId);
             }
         } else {
-            $cleanEp = preg_replace('/[^0-9]/', '', $epNum) ?: '1';
-            $episodeId = $resolvedSlug . "-1x" . $cleanEp;
+            $episodeId = $resolvedSlug . "-1x" . $cleanEpNumber;
         }
     } else {
         echo json_encode(["success" => false, "error" => "Could not resolve AniList ID: " . $anilistId]);
@@ -129,7 +236,7 @@ $activeDomain = null;
 $type = $episodeId ? "episode" : "movie";
 
 if ($type === "movie") {
-    $targetPaths = ["/movies/" . $movieId, "/movie/" . $movieId];
+    $targetPaths = ["/movies/" . trim($movieId, "/") . "/", "/movie/" . trim($movieId, "/") . "/"];
     foreach ($targetPaths as $path) {
         $res = fetchHtmlWithFallback($path);
         if (!isset($res['error'])) {
@@ -139,9 +246,8 @@ if ($type === "movie") {
         }
     }
 } else {
-    $targetPaths = ["/episode/" . $episodeId, "/watch/" . $episodeId];
+    $targetPaths = ["/episode/" . trim($episodeId, "/") . "/", "/watch/" . trim($episodeId, "/") . "/"];
 
-    // Check if direct episode path failed, try resolving via series page
     if (preg_match('/^(.*?)-1x(\d+)$/', $episodeId, $matches)) {
         $seriesBase = $matches[1];
         $epNumber   = $matches[2];
@@ -161,8 +267,37 @@ if ($type === "movie") {
     }
 }
 
-// Fallback to stale cache if scraping fails on forceRefresh
-if (!$html) {
+$extractedStreams = $html ? parseStreamEmbedsFromHtml($html, $cleanEpNumber) : ['streamLink' => null, 'servers' => []];
+
+// 5. Automatic Animesalt Fallback if PirateXPlay returned 0 iframes or timed out
+if (empty($extractedStreams['servers'])) {
+    // Try Animesalt fallback using series slug or AniList details
+    $fallbackSlug = preg_replace('/-season-\d+-\d+$/i', '', $episodeId);
+    $fallbackSlug = preg_replace('/-1x\d+$/i', '', $fallbackSlug);
+
+    $asPaths = [
+        "/tv/" . $fallbackSlug . "/",
+        "/tv/" . str_replace("demon-slayer-", "", $fallbackSlug) . "/"
+    ];
+
+    foreach ($asPaths as $asPath) {
+        $asRes = fetchHtmlWithFallback("https://animesalt.me" . $asPath);
+        if (isset($asRes['html'])) {
+            $extractedFallback = parseStreamEmbedsFromHtml($asRes['html'], $cleanEpNumber);
+            if (!empty($extractedFallback['servers'])) {
+                $extractedStreams = $extractedFallback;
+                $activeDomain = 'animesalt.me';
+                break;
+            }
+        }
+    }
+}
+
+$streamLink = $extractedStreams['streamLink'];
+$servers    = $extractedStreams['servers'];
+$downloadLink = $streamLink;
+
+if (empty($servers)) {
     if ($forceRefresh) {
         $staleCache = getRedisCache($cacheKey);
         if ($staleCache !== null && !empty($staleCache)) {
@@ -174,55 +309,7 @@ if (!$html) {
     exit;
 }
 
-libxml_use_internal_errors(true);
-$dom = new DOMDocument();
-$dom->loadHTML($html);
-libxml_clear_errors();
-$xpath = new DOMXPath($dom);
-
-/* Extract stream link and servers */
-$iframeNodes = $xpath->query("//iframe");
-$streamLink  = null;
-$servers     = [];
-
-foreach ($iframeNodes as $iframe) {
-    $src     = $iframe->getAttribute("src");
-    $dataSrc = $iframe->getAttribute("data-src");
-    $url     = $src ? $src : $dataSrc;
-
-    if ($url && !str_contains($url, "about:blank")) {
-        if (!$streamLink) {
-            $streamLink = $url;
-        }
-        $servers[] = [
-            "name" => "Server " . (count($servers) + 1),
-            "url"  => $url
-        ];
-    }
-}
-
-// Fallback regex if XPath iframe is missing
-if (!$streamLink) {
-    if (preg_match_all('/<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']/i', $html, $matches)) {
-        foreach ($matches[1] as $url) {
-            if ($url && !str_contains($url, "about:blank")) {
-                if (!$streamLink) {
-                    $streamLink = $url;
-                }
-                $servers[] = [
-                    "name" => "Server " . (count($servers) + 1),
-                    "url"  => $url
-                ];
-            }
-        }
-    }
-}
-
-$downloadNode = $xpath->query("//a[contains(@href,'download') or contains(@class,'download')]")->item(0);
-$downloadLink = $downloadNode ? $downloadNode->getAttribute("href") : $streamLink;
-
-$titleNode = $xpath->query("//h1[contains(@class,'entry-title')] | //h1")->item(0);
-$titleText = $titleNode ? trim(html_entity_decode($titleNode->textContent)) : "Stream";
+$titleText = "Episode " . $cleanEpNumber;
 
 /* Construct Lean & Fast JSON Response (Stream object at top, explicit TTL & Cache Mode in info) */
 $responseArray = [
@@ -246,7 +333,7 @@ $responseArray = [
 
 $jsonOutput = json_encode($responseArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-// 5. Save Fresh Stream Result to Upstash Redis
+// 6. Save Fresh Stream Result to Upstash Redis
 if ($streamLink) {
     setRedisCache($cacheKey, $jsonOutput, $ttlSeconds);
 }
