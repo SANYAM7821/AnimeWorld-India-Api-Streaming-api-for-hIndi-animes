@@ -24,14 +24,14 @@ $cacheMode   = $isOngoing ? "12 Hours Cache (Ongoing Anime)" : "30 Days Cache (C
 
 $cleanEpNumber = preg_replace('/[^0-9]/', '', $epNum) ?: '1';
 
-// Helper to filter out non-video iframes & empty/ad-redirect domains (e.g. YouTube trailers, p2pplay.pro, short.icu)
+// Helper to filter out non-video iframes (e.g. YouTube trailers, social embeds)
 function isIgnoredIframeUrl($url) {
     if (empty($url) || str_contains($url, "about:blank")) {
         return true;
     }
     $ignoredKeywords = [
         'youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 'google.com',
-        'doubleclick', 'disqus', 'p2pplay.pro', 'desidubanime', 'short.icu'
+        'doubleclick', 'disqus'
     ];
     foreach ($ignoredKeywords as $kw) {
         if (str_contains(strtolower($url), $kw)) {
@@ -50,7 +50,7 @@ function parseStreamEmbedsFromHtml($html, $cleanEp = '1') {
         return ['streamLink' => null, 'servers' => []];
     }
 
-    // 1. Try PirateXPlay iframe extraction (excluding YouTube / non-video / ad iframes)
+    // 1. Try PirateXPlay iframe extraction (excluding YouTube / non-video iframes)
     libxml_use_internal_errors(true);
     $dom = new DOMDocument();
     $dom->loadHTML($html);
