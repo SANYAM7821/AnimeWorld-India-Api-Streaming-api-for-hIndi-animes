@@ -220,7 +220,7 @@ function setRedisCache($key, $value, $ttlSeconds) {
 }
 
 /* =========================================================================
-   ANILIST ID RESOLVER HELPER (With Ani.zip High-Reliability Fallback & Redis Caching)
+   ANILIST ID RESOLVER HELPER (With Triple-Failsafe & Redis Caching)
    Maps AniList ID -> PirateXPlay Series/Movie Slug & Caches in Redis
    ========================================================================= */
 
@@ -299,6 +299,36 @@ function fetchAniListDetails($anilistId) {
         }
     }
 
+    // 3. Third Fallback: MAL HTML Title Resolver
+    $ch3 = curl_init("https://myanimelist.net/anime/" . (int)$anilistId);
+    curl_setopt_array($ch3, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_USERAGENT => "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        CURLOPT_TIMEOUT => 8,
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
+    $malHtml = curl_exec($ch3);
+    $malCode = curl_getinfo($ch3, CURLINFO_HTTP_CODE);
+    curl_close($ch3);
+
+    if ($malCode === 200 && $malHtml) {
+        if (preg_match('/<h1[^>]*class=["\']title-name[^"\']*["\'][^>]*>(.*?)<\/h1>/i', $malHtml, $mName)) {
+            $titleName = trim(strip_tags($mName[1]));
+            $media = [
+                'format' => 'TV',
+                'title'  => [
+                    'english' => $titleName,
+                    'romaji'  => $titleName,
+                    'native'  => $titleName
+                ],
+                'synonyms' => []
+            ];
+            setRedisCache($detailKey, json_encode($media), 2592000);
+            return $media;
+        }
+    }
+
     return null;
 }
 
@@ -319,7 +349,7 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
         }
     }
 
-    // Fetch titles from AniList (with Ani.zip fallback)
+    // Fetch titles from AniList (with triple failover)
     $aniDetails = fetchAniListDetails($anilistId);
     if (!$aniDetails) {
         return null;
