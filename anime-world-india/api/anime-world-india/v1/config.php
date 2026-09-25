@@ -411,6 +411,9 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
             $xpath = new DOMXPath($dom);
 
             $articles = $xpath->query("//article[contains(@class,'post')]");
+            $movieMatches = [];
+            $seriesMatches = [];
+
             foreach ($articles as $art) {
                 $linkNode = $xpath->query(".//a[contains(@class,'lnk-blk')]", $art)->item(0);
                 if ($linkNode) {
@@ -419,11 +422,9 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
                         $cleanPath = parse_url($link, PHP_URL_PATH);
                         $foundSlug = trim($cleanPath, "/");
 
-                        if (str_contains($link, "movie") || $isMovieFormat) {
+                        if (str_contains($link, "movie")) {
                             $foundSlug = str_replace(["movies/", "movie/"], "", $foundSlug);
-                            $result = ['type' => 'movie', 'slug' => $foundSlug];
-                            setRedisCache($mappingKey, json_encode($result), 2592000);
-                            return $result;
+                            $movieMatches[] = $foundSlug;
                         } elseif (str_contains($link, "series")) {
                             $foundSlug = str_replace("series/", "", $foundSlug);
 
@@ -439,12 +440,28 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
                                 }
                             }
 
-                            $result = ['type' => 'series', 'slug' => $foundSlug];
-                            setRedisCache($mappingKey, json_encode($result), 2592000);
-                            return $result;
+                            $seriesMatches[] = $foundSlug;
                         }
                     }
                 }
+            }
+
+            if ($isMovieFormat && !empty($movieMatches)) {
+                $result = ['type' => 'movie', 'slug' => $movieMatches[0]];
+                setRedisCache($mappingKey, json_encode($result), 2592000);
+                return $result;
+            } elseif (!$isMovieFormat && !empty($seriesMatches)) {
+                $result = ['type' => 'series', 'slug' => $seriesMatches[0]];
+                setRedisCache($mappingKey, json_encode($result), 2592000);
+                return $result;
+            } elseif (!empty($movieMatches)) {
+                $result = ['type' => 'movie', 'slug' => $movieMatches[0]];
+                setRedisCache($mappingKey, json_encode($result), 2592000);
+                return $result;
+            } elseif (!empty($seriesMatches)) {
+                $result = ['type' => 'series', 'slug' => $seriesMatches[0]];
+                setRedisCache($mappingKey, json_encode($result), 2592000);
+                return $result;
             }
         }
     }
