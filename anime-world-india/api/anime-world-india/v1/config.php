@@ -328,12 +328,22 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
     $format = strtolower($aniDetails['format'] ?? '');
     $isMovieFormat = ($format === 'movie' || $format === 'special');
 
-    $rawTitles = [];
-    if (!empty($aniDetails['title']['english'])) {
-        $rawTitles[] = $aniDetails['title']['english'];
+    $engTitle = $aniDetails['title']['english'] ?? '';
+    $romTitle = $aniDetails['title']['romaji'] ?? '';
+    $fullTitleStr = strtolower($engTitle . ' ' . $romTitle);
+
+    // Detect if AniList title explicitly specifies a Season > 1
+    $explicitSeason = 1;
+    if (preg_match('/\b(?:season\s*(\d+)|\b(\d+)(?:st|nd|rd|th)\s*season)\b/i', $fullTitleStr, $seasonMatch)) {
+        $explicitSeason = (int)($seasonMatch[1] ?: $seasonMatch[2]);
     }
-    if (!empty($aniDetails['title']['romaji'])) {
-        $rawTitles[] = $aniDetails['title']['romaji'];
+
+    $rawTitles = [];
+    if (!empty($engTitle)) {
+        $rawTitles[] = $engTitle;
+    }
+    if (!empty($romTitle)) {
+        $rawTitles[] = $romTitle;
     }
     if (!empty($aniDetails['synonyms'])) {
         foreach ($aniDetails['synonyms'] as $syn) {
@@ -386,6 +396,19 @@ function resolveAniListToSlug($anilistId, $forceRefresh = false) {
                             return $result;
                         } elseif (str_contains($link, "series")) {
                             $foundSlug = str_replace("series/", "", $foundSlug);
+
+                            // Verify season alignment between requested AniList season and found PirateXPlay slug
+                            if (preg_match('/-season-(\d+)-/i', $foundSlug, $foundSM)) {
+                                $foundSeasonNum = (int)$foundSM[1];
+                                if ($foundSeasonNum !== $explicitSeason) {
+                                    $targetSlugCandidate = preg_replace('/-season-\d+-/i', "-season-{$explicitSeason}-", $foundSlug);
+                                    $checkRes = fetchHtmlWithFallback("/series/" . $targetSlugCandidate . "/");
+                                    if (isset($checkRes['html']) && strlen($checkRes['html']) > 1000) {
+                                        $foundSlug = $targetSlugCandidate;
+                                    }
+                                }
+                            }
+
                             $result = ['type' => 'series', 'slug' => $foundSlug];
                             setRedisCache($mappingKey, json_encode($result), 2592000);
                             return $result;

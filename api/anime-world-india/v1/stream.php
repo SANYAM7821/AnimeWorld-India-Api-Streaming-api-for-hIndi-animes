@@ -146,85 +146,96 @@ function resolveEpisodePageUrl($seriesSlug, $epNumber = '1') {
         $targetSeason = (int)$sM[1];
     }
 
-    $seriesPath = str_starts_with($seriesSlug, "/") ? $seriesSlug : "/series/" . $seriesSlug . "/";
-    $res = fetchHtmlWithFallback($seriesPath);
-    if (!isset($res['html'])) {
-        return null;
+    // Always check the exact seriesSlug FIRST before testing alternatives
+    $candidateSeriesPaths = [
+        str_starts_with($seriesSlug, "/") ? $seriesSlug : "/series/" . $seriesSlug . "/"
+    ];
+
+    if ($targetSeason !== 1) {
+        $season1Slug = preg_replace('/-season-\d+-/i', '-season-1-', $seriesSlug);
+        $candidateSeriesPaths[] = str_starts_with($season1Slug, "/") ? $season1Slug : "/series/" . $season1Slug . "/";
     }
 
-    $html = $res['html'];
-    $activeDomain = $res['active_domain'];
-
-    libxml_use_internal_errors(true);
-    $dom = new DOMDocument();
-    $dom->loadHTML($html);
-    libxml_clear_errors();
-    $xpath = new DOMXPath($dom);
-
-    // PASS 1: Strictly match exact target season & episode e.g. -4x1/ or -1x1/
-    $epLinks = $xpath->query("//a[contains(@href,'/episode/')]");
-    foreach ($epLinks as $a) {
-        $href = $a->getAttribute("href");
-        if (preg_match('/-' . $targetSeason . 'x' . $cleanEp . '\//i', $href) ||
-            preg_match('/season-' . $targetSeason . '-.*?-x?' . $cleanEp . '\//i', $href)) {
-            return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
+    foreach (array_unique($candidateSeriesPaths) as $seriesPath) {
+        $res = fetchHtmlWithFallback($seriesPath);
+        if (!isset($res['html'])) {
+            continue;
         }
-    }
 
-    // PASS 2: Match any season -\d+x{cleanEp}/
-    foreach ($epLinks as $a) {
-        $href = $a->getAttribute("href");
-        if (preg_match('/-\d+x' . $cleanEp . '\//i', $href)) {
-            return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
+        $html = $res['html'];
+        $activeDomain = $res['active_domain'];
+
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $dom->loadHTML($html);
+        libxml_clear_errors();
+        $xpath = new DOMXPath($dom);
+
+        // PASS 1: Strictly match exact target season & episode e.g. -4x1/ or -1x1/
+        $epLinks = $xpath->query("//a[contains(@href,'/episode/')]");
+        foreach ($epLinks as $a) {
+            $href = $a->getAttribute("href");
+            if (preg_match('/-' . $targetSeason . 'x' . $cleanEp . '\//i', $href) ||
+                preg_match('/season-' . $targetSeason . '-.*?-x?' . $cleanEp . '\//i', $href)) {
+                return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
+            }
         }
-    }
 
-    // PASS 3: Check ONLY actual season button links
-    $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')]");
-    $seasonUrls = [];
-
-    foreach ($seasonBtns as $sBtn) {
-        $href = $sBtn->getAttribute("href");
-        if ($href && str_contains($href, "/series/")) {
-            $seasonUrls[] = parse_url($href, PHP_URL_PATH);
+        // PASS 2: Match any season -\d+x{cleanEp}/
+        foreach ($epLinks as $a) {
+            $href = $a->getAttribute("href");
+            if (preg_match('/-\d+x' . $cleanEp . '\//i', $href)) {
+                return ['url' => parse_url($href, PHP_URL_PATH), 'domain' => $activeDomain];
+            }
         }
-    }
 
-    // Estimate season URLs for long multi-season shows if episode > 50
-    if (preg_match('/^(.*?)-season-\d+-(.*)$/i', $seriesSlug, $m)) {
-        $basePre = $m[1];
-        $basePost = $m[2];
-        $estSeason = (int)ceil($targetEpInt / 50);
-        if ($estSeason < 1) $estSeason = 1;
+        // Check ONLY actual season button links
+        $seasonBtns = $xpath->query("//a[contains(@class,'season-btn')]");
+        $seasonUrls = [];
 
-        $seasonUrls[] = "/series/{$basePre}-season-{$targetSeason}-{$basePost}/";
-        $seasonUrls[] = "/series/{$basePre}-season-1-{$basePost}/";
-        $seasonUrls[] = "/series/{$basePre}-season-{$estSeason}-{$basePost}/";
-        $seasonUrls[] = "/series/{$basePre}-season-" . ($estSeason + 1) . "-{$basePost}/";
-        $seasonUrls[] = "/series/{$basePre}-season-" . max(1, $estSeason - 1) . "-{$basePost}/";
-    }
+        foreach ($seasonBtns as $sBtn) {
+            $href = $sBtn->getAttribute("href");
+            if ($href && str_contains($href, "/series/")) {
+                $seasonUrls[] = parse_url($href, PHP_URL_PATH);
+            }
+        }
 
-    foreach (array_unique($seasonUrls) as $sUrl) {
-        if (!empty($sUrl)) {
-            $sRes = fetchHtmlWithFallback($sUrl);
-            if (isset($sRes['html'])) {
-                $sDom = new DOMDocument();
-                libxml_use_internal_errors(true);
-                $sDom->loadHTML($sRes['html']);
-                libxml_clear_errors();
-                $sXpath = new DOMXPath($sDom);
+        // Estimate season URLs for long multi-season shows
+        if (preg_match('/^(.*?)-season-\d+-(.*)$/i', $seriesSlug, $m)) {
+            $basePre = $m[1];
+            $basePost = $m[2];
+            $estSeason = (int)ceil($targetEpInt / 50);
+            if ($estSeason < 1) $estSeason = 1;
 
-                $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
-                foreach ($sEpLinks as $a) {
-                    $eHref = $a->getAttribute("href");
-                    if (preg_match('/-' . $targetSeason . 'x' . $cleanEp . '\//i', $eHref)) {
-                        return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+            $seasonUrls[] = "/series/{$basePre}-season-{$targetSeason}-{$basePost}/";
+            $seasonUrls[] = "/series/{$basePre}-season-1-{$basePost}/";
+            $seasonUrls[] = "/series/{$basePre}-season-{$estSeason}-{$basePost}/";
+            $seasonUrls[] = "/series/{$basePre}-season-" . ($estSeason + 1) . "-{$basePost}/";
+            $seasonUrls[] = "/series/{$basePre}-season-" . max(1, $estSeason - 1) . "-{$basePost}/";
+        }
+
+        foreach (array_unique($seasonUrls) as $sUrl) {
+            if (!empty($sUrl)) {
+                $sRes = fetchHtmlWithFallback($sUrl);
+                if (isset($sRes['html'])) {
+                    $sDom = new DOMDocument();
+                    libxml_use_internal_errors(true);
+                    $sDom->loadHTML($sRes['html']);
+                    libxml_clear_errors();
+                    $sXpath = new DOMXPath($sDom);
+
+                    $sEpLinks = $sXpath->query("//a[contains(@href,'/episode/')]");
+                    foreach ($sEpLinks as $a) {
+                        $eHref = $a->getAttribute("href");
+                        if (preg_match('/-' . $targetSeason . 'x' . $cleanEp . '\//i', $eHref)) {
+                            return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+                        }
                     }
-                }
-                foreach ($sEpLinks as $a) {
-                    $eHref = $a->getAttribute("href");
-                    if (preg_match('/-\d+x' . $cleanEp . '\//i', $eHref)) {
-                        return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+                    foreach ($sEpLinks as $a) {
+                        $eHref = $a->getAttribute("href");
+                        if (preg_match('/-\d+x' . $cleanEp . '\//i', $eHref)) {
+                            return ['url' => parse_url($eHref, PHP_URL_PATH), 'domain' => $sRes['active_domain']];
+                        }
                     }
                 }
             }
